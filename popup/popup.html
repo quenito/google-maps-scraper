@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Maps Lead Scraper</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><img src="../icons/icon48.png" alt="" class="header-icon">Maps Lead Scraper</h1>
+    </header>
+
+    <main>
+      <div class="status-section">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span class="status-text" id="statusText">Ready</span>
+        </div>
+        <div class="lead-count">
+          <span class="count-number" id="leadCount">0</span>
+          <span class="count-label">leads scraped</span>
+        </div>
+        <div class="duplicate-status" id="duplicateStatus" style="display: none;">
+          <span class="duplicate-count" id="duplicateCount">0</span>
+          <span class="duplicate-label"> duplicates skipped</span>
+        </div>
+      </div>
+
+      <div class="email-section" id="emailSection" style="display: none;">
+        <div class="email-progress">
+          <span class="email-status" id="emailStatus">Extracting emails...</span>
+          <span class="email-count" id="emailCount">0/0</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="current-business" id="currentBusiness"></div>
+      </div>
+
+      <div class="error-message" id="errorMessage"></div>
+
+      <div class="options-section">
+        <label class="checkbox-label" title="Uncheck to manually control collecting email addresses after the scrape has finished">
+          <input type="checkbox" id="autoExtractCheckbox" checked>
+          <span>Auto-extract emails after scraping</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="notificationsCheckbox" checked>
+          <span>Notify when complete</span>
+        </label>
+      </div>
+
+      <div class="button-section">
+        <button class="btn btn-primary" id="startStopBtn">Start Scraping</button>
+        <button class="btn btn-email" id="extractEmailsBtn" disabled>Extract Emails</button>
+
+        <div class="fields-toggle-section">
+          <button class="btn-text" id="toggleFieldsBtn">Customize Export Fields ▼</button>
+        </div>
+
+        <div class="fields-section" id="fieldsSection" style="display: none;">
+          <div class="fields-grid">
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="name" checked disabled>
+              <span>Name</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="email" checked>
+              <span>Email</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="rating" checked>
+              <span>Rating</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="reviewCount" checked>
+              <span>Reviews</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="category" checked>
+              <span>Category</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="address" checked>
+              <span>Address</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="phone" checked>
+              <span>Phone</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="website" checked>
+              <span>Website</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="googleMapsUrl" checked>
+              <span>Maps URL</span>
+            </label>
+          </div>
+        </div>
+
+        <button class="btn btn-secondary" id="exportBtn" disabled>Export CSV</button>
+        <button class="btn btn-sheets" id="exportSheetsBtn" disabled>Export to Sheets</button>
+        <button class="btn-text btn-clear" id="clearResultsBtn" style="display: none;">Clear Results</button>
+      </div>
+
+      <!-- Google Sheets Export Modal -->
+      <div class="modal-overlay" id="sheetsModal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Export to Google Sheets</h3>
+            <button class="modal-close" id="closeModalBtn">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-options">
+              <label class="radio-label">
+                <input type="radio" name="sheetsOption" value="new" checked>
+                <span>Create new spreadsheet</span>
+              </label>
+              <label class="radio-label" id="appendOption" style="display: none;">
+                <input type="radio" name="sheetsOption" value="append">
+                <span>Append to last export</span>
+              </label>
+            </div>
+            <div class="modal-status" id="sheetsStatus" style="display: none;">
+              <span id="sheetsStatusText">Connecting to Google...</span>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="cancelSheetsBtn">Cancel</button>
+            <button class="btn btn-sheets" id="confirmSheetsBtn">Export</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div class="history-section" id="historySection">
+      <div class="history-header" id="historyHeader">
+        <span>Search History</span>
+        <span class="history-toggle" id="historyToggle">▼</span>
+      </div>
+      <div class="history-list" id="historyList" style="display: none;">
+        <div class="history-empty">No search history yet</div>
+      </div>
+      <button class="btn-text" id="clearSearchHistoryBtn" style="display: none;">
+        Clear Search History
+      </button>
+    </div>
+
+    <footer>
+      <button class="btn-text" id="clearHistoryBtn" style="display: none;">
+        Clear History (<span id="historyCount">0</span> saved)
+      </button>
+      <span class="version">v2.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
