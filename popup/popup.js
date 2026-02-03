@@ -24,6 +24,7 @@ const toggleFieldsBtn = document.getElementById('toggleFieldsBtn');
 const fieldsSection = document.getElementById('fieldsSection');
 const fieldCheckboxes = document.querySelectorAll('.field-checkbox input[type="checkbox"]');
 const notificationsCheckbox = document.getElementById('notificationsCheckbox');
+const socialSearchCheckbox = document.getElementById('socialSearchCheckbox');
 const exportSheetsBtn = document.getElementById('exportSheetsBtn');
 const sheetsModal = document.getElementById('sheetsModal');
 const closeModalBtn = document.getElementById('closeModalBtn');
@@ -61,6 +62,7 @@ let scrapedDataWithEmails = [];
 let autoExtractEmails = true;
 let currentDuplicatesSkipped = 0;
 let notificationsEnabled = true;
+let socialSearchEnabled = false; // Off by default due to speed tradeoff
 let exportFields = {
   name: true,      // Always required
   email: true,
@@ -179,6 +181,12 @@ function updateExtractEmailsButtonState() {
 notificationsCheckbox.addEventListener('change', async () => {
   notificationsEnabled = notificationsCheckbox.checked;
   await chrome.storage.local.set({ notificationsEnabled });
+});
+
+// Social search checkbox handler (for no-website businesses)
+socialSearchCheckbox.addEventListener('change', async () => {
+  socialSearchEnabled = socialSearchCheckbox.checked;
+  await chrome.storage.local.set({ socialSearchEnabled });
 });
 
 // License activation handlers
@@ -465,7 +473,8 @@ async function loadStoredData() {
       'emailExtractionProgress',
       'autoExtractEmails',
       'exportFields',
-      'notificationsEnabled'
+      'notificationsEnabled',
+      'socialSearchEnabled'
     ]);
 
     // Load auto-extract preference (default: true)
@@ -478,6 +487,12 @@ async function loadStoredData() {
     if (result.notificationsEnabled !== undefined) {
       notificationsEnabled = result.notificationsEnabled;
       notificationsCheckbox.checked = notificationsEnabled;
+    }
+
+    // Load social search preference (default: false)
+    if (result.socialSearchEnabled !== undefined) {
+      socialSearchEnabled = result.socialSearchEnabled;
+      socialSearchCheckbox.checked = socialSearchEnabled;
     }
 
     // Load export field preferences
@@ -737,7 +752,8 @@ async function startEmailExtraction() {
   try {
     chrome.runtime.sendMessage({
       action: 'extractEmails',
-      businesses: scrapedData
+      businesses: scrapedData,
+      socialSearchEnabled: socialSearchEnabled // v2.1: Enable Google search for no-website businesses
     }, () => {
       if (chrome.runtime.lastError) {
         console.error('Error sending message:', chrome.runtime.lastError);

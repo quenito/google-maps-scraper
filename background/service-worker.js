@@ -538,6 +538,97 @@ function extractSocialMediaUrls(html) {
   return socialUrls;
 }
 
+// Search Google to find social media profiles for a business (v2.1)
+// Used for businesses without websites
+async function searchGoogleForSocialProfiles(businessName, location) {
+  const results = {
+    facebookUrl: null,
+    instagramUrl: null,
+    emails: []
+  };
+
+  try {
+    // Clean up business name and location for search
+    const cleanName = businessName.replace(/[^\w\s]/g, ' ').trim();
+    const cleanLocation = location ? location.split(',')[0].trim() : ''; // Just city name
+
+    // Search for Facebook page
+    const fbSearchQuery = encodeURIComponent(`"${cleanName}" ${cleanLocation} site:facebook.com`);
+    const fbSearchUrl = `https://www.google.com/search?q=${fbSearchQuery}&num=5`;
+
+    console.log(`[Social Search] Searching Google for Facebook: ${cleanName} ${cleanLocation}`);
+
+    const fbResult = await fetchPage(fbSearchUrl);
+    if (fbResult.success) {
+      // Extract Facebook URLs from Google search results
+      const fbUrlPattern = /https?:\/\/(?:www\.)?facebook\.com\/(?:people\/|pages\/|profile\.php\?id=)?[a-zA-Z0-9._-]+\/?/gi;
+      const fbMatches = fbResult.html.match(fbUrlPattern) || [];
+
+      // Filter out generic Facebook URLs
+      for (const url of fbMatches) {
+        if (!url.includes('/sharer') &&
+            !url.includes('/share') &&
+            !url.includes('/login') &&
+            !url.includes('/policies') &&
+            !url.includes('/help') &&
+            !url.includes('facebook.com/search')) {
+          results.facebookUrl = url.split('&')[0].split('?')[0]; // Clean URL
+          console.log(`[Social Search] Found Facebook: ${results.facebookUrl}`);
+          break;
+        }
+      }
+    }
+
+    // Small delay before next search
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Search for Instagram profile
+    const igSearchQuery = encodeURIComponent(`"${cleanName}" ${cleanLocation} site:instagram.com`);
+    const igSearchUrl = `https://www.google.com/search?q=${igSearchQuery}&num=5`;
+
+    console.log(`[Social Search] Searching Google for Instagram: ${cleanName} ${cleanLocation}`);
+
+    const igResult = await fetchPage(igSearchUrl);
+    if (igResult.success) {
+      // Extract Instagram URLs from Google search results
+      const igUrlPattern = /https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9._]+\/?/gi;
+      const igMatches = igResult.html.match(igUrlPattern) || [];
+
+      // Filter out generic Instagram URLs
+      for (const url of igMatches) {
+        if (!url.includes('/accounts') &&
+            !url.includes('/explore') &&
+            !url.includes('/p/') &&
+            !url.includes('/reel/')) {
+          results.instagramUrl = url.split('?')[0]; // Clean URL
+          console.log(`[Social Search] Found Instagram: ${results.instagramUrl}`);
+          break;
+        }
+      }
+    }
+
+    // If we found a Facebook page, try to extract email from it
+    if (results.facebookUrl) {
+      console.log(`[Social Search] Fetching Facebook page for email: ${results.facebookUrl}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const fbPageResult = await fetchPage(results.facebookUrl);
+      if (fbPageResult.success) {
+        const fbEmails = extractEmailsFromHTML(fbPageResult.html);
+        if (fbEmails.length > 0) {
+          results.emails = fbEmails;
+          console.log(`[Social Search] Found ${fbEmails.length} emails on Facebook page!`);
+        }
+      }
+    }
+
+  } catch (error) {
+    console.warn(`[Social Search] Error searching for ${businessName}:`, error.message);
+  }
+
+  return results;
+}
+
 // Fetch a single page
 async function fetchPage(url) {
   try {
@@ -721,7 +812,8 @@ async function fetchAndExtractEmails(url) {
 }
 
 // Process multiple businesses for email extraction
-async function extractEmailsFromBusinesses(businesses, sendProgress) {
+// v2.1: Added socialSearchEnabled parameter for Google search fallback
+async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearchEnabled = false) {
   const results = [];
   const delay = 500; // Reduced delay since we have delays within fetchAndExtractEmails
 
@@ -760,18 +852,38 @@ async function extractEmailsFromBusinesses(businesses, sendProgress) {
         twitterUrl: result.socialUrls?.twitterUrl || null
       });
     } else {
-      results.push({
-        ...business,
-        emails: [],
-        emailError: 'No website',
-        pagesScanned: 0,
-        // v2.1: New fields (empty for businesses without websites)
-        contactPageUrl: null,
-        facebookUrl: null,
-        instagramUrl: null,
-        linkedinUrl: null,
-        twitterUrl: null
-      });
+      // No website - try Google search for social profiles if enabled (v2.1)
+      if (socialSearchEnabled) {
+        console.log(`[Email Extractor] No website for "${business.name}" - searching Google for social profiles`);
+
+        const socialResults = await searchGoogleForSocialProfiles(business.name, business.address);
+
+        results.push({
+          ...business,
+          emails: socialResults.emails,
+          emailError: socialResults.emails.length > 0 ? null : 'No website (found via social search)',
+          pagesScanned: 0,
+          // v2.1: Social profiles found via Google search
+          contactPageUrl: null,
+          facebookUrl: socialResults.facebookUrl,
+          instagramUrl: socialResults.instagramUrl,
+          linkedinUrl: null,
+          twitterUrl: null
+        });
+      } else {
+        results.push({
+          ...business,
+          emails: [],
+          emailError: 'No website',
+          pagesScanned: 0,
+          // v2.1: New fields (empty for businesses without websites)
+          contactPageUrl: null,
+          facebookUrl: null,
+          instagramUrl: null,
+          linkedinUrl: null,
+          twitterUrl: null
+        });
+      }
     }
 
     // Delay between businesses (except for last one)
@@ -1015,8 +1127,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'extractEmails') {
     // Handle email extraction request
     const businesses = message.businesses || [];
+    const socialSearchEnabled = message.socialSearchEnabled || false; // v2.1: Google search for no-website businesses
 
-    console.log(`[Email Extractor] Starting extraction for ${businesses.length} businesses`);
+    console.log(`[Email Extractor] Starting extraction for ${businesses.length} businesses (socialSearch: ${socialSearchEnabled})`);
 
     // Process asynchronously
     (async () => {
@@ -1028,7 +1141,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }).catch(() => {
           // Popup might be closed
         });
-      });
+      }, socialSearchEnabled); // v2.1: Pass social search flag
 
       // Send completion message
       chrome.runtime.sendMessage({
