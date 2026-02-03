@@ -551,3 +551,273 @@ footer {
 .modal-footer .btn {
   flex: 1;
 }
+
+/* Trial Banner */
+.trial-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 15px;
+}
+
+.trial-text {
+  font-size: 13px;
+  color: #795548;
+}
+
+.trial-text strong {
+  color: #e65100;
+}
+
+.btn-upgrade-small {
+  background: #1a73e8;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-upgrade-small:hover {
+  background: #1557b0;
+}
+
+/* License Badge */
+.license-badge {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 15px;
+}
+
+.badge-tier {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-tier.pro {
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  color: #1565c0;
+}
+
+/* Trial Ended Section */
+.trial-ended-section {
+  text-align: center;
+  padding: 15px 0;
+}
+
+.trial-ended-icon {
+  font-size: 48px;
+  margin-bottom: 10px;
+}
+
+.trial-ended-section h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #202124;
+  margin-bottom: 8px;
+}
+
+.trial-ended-section p {
+  font-size: 13px;
+  color: #5f6368;
+  margin-bottom: 20px;
+  line-height: 1.4;
+}
+
+/* Tier Cards */
+.tier-cards {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.tier-card {
+  flex: 1;
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 15px 10px;
+  text-align: center;
+  position: relative;
+}
+
+.tier-card.tier-pro {
+  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+  border-color: #1a73e8;
+}
+
+.tier-popular {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a73e8;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.tier-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #202124;
+  margin-bottom: 5px;
+}
+
+.tier-price {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a73e8;
+  margin-bottom: 10px;
+}
+
+.tier-features {
+  list-style: none;
+  text-align: left;
+  font-size: 11px;
+  color: #5f6368;
+  margin-bottom: 12px;
+}
+
+.tier-features li {
+  padding: 3px 0;
+  padding-left: 15px;
+  position: relative;
+}
+
+.tier-features li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: #34a853;
+  font-weight: bold;
+}
+
+.tier-card .btn {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+/* License Input Section */
+.license-input-section {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 15px;
+  margin-top: 5px;
+}
+
+.already-purchased {
+  font-size: 12px;
+  color: #5f6368;
+  margin-bottom: 8px;
+}
+
+.license-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.license-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.license-input:focus {
+  border-color: #1a73e8;
+}
+
+.license-input-full {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.btn-activate {
+  background: #34a853;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-activate:hover {
+  background: #2d9249;
+}
+
+.btn-activate:disabled {
+  background: #9aa0a6;
+  cursor: not-allowed;
+}
+
+.license-error {
+  color: #ea4335;
+  font-size: 12px;
+  margin-top: 8px;
+  text-align: center;
+}
+
+.license-success {
+  color: #34a853;
+  font-size: 12px;
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Modal description */
+.modal-description {
+  font-size: 13px;
+  color: #5f6368;
+  margin-bottom: 15px;
+}
+
+/* Pro feature badge on buttons */
+.pro-badge {
+  background: linear-gradient(135deg, #1a73e8 0%, #8e24aa 100%);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+
+.btn-sheets.disabled-pro {
+  opacity: 0.7;
+  position: relative;
+}
+
+.btn-sheets.disabled-pro::after {
+  content: "PRO";
+  position: absolute;
+  right: 10px;
+  background: white;
+  color: #0f9d58;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+}

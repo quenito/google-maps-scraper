@@ -1,6 +1,218 @@
 // Google Maps Lead Scraper - Background Service Worker
 // Phase 2: Email extraction from business websites
 
+// ============================================
+// License & Trial Management
+// ============================================
+
+const TRIAL_SCRAPES = 3;
+const GUMROAD_PRODUCT_ID = 'iejae'; // Gumroad product ID for Maps Lead Scraper
+
+// License status object structure
+// {
+//   status: 'trial' | 'active' | 'expired' | 'invalid',
+//   tier: null | 'standard' | 'pro',
+//   trialScrapesRemaining: number,
+//   licenseKey: string | null,
+//   validatedAt: number | null,
+//   email: string | null
+// }
+
+// Initialize license state for new installations
+async function initializeLicenseState() {
+  const result = await chrome.storage.local.get(['licenseStatus']);
+  if (!result.licenseStatus) {
+    const initialState = {
+      status: 'trial',
+      tier: null,
+      trialScrapesRemaining: TRIAL_SCRAPES,
+      licenseKey: null,
+      validatedAt: null,
+      email: null
+    };
+    await chrome.storage.local.set({ licenseStatus: initialState });
+    return initialState;
+  }
+  return result.licenseStatus;
+}
+
+// Get current license status
+async function getLicenseStatus() {
+  const result = await chrome.storage.local.get(['licenseStatus']);
+  if (!result.licenseStatus) {
+    return await initializeLicenseState();
+  }
+  return result.licenseStatus;
+}
+
+// Validate license key with Gumroad API
+async function validateLicenseKey(licenseKey) {
+  try {
+    const response = await fetch('https://api.gumroad.com/v2/licenses/verify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        product_id: GUMROAD_PRODUCT_ID,
+        license_key: licenseKey,
+        increment_uses_count: 'false' // Don't increment on validation check
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+      return {
+        valid: false,
+        error: data.message || 'Invalid license key'
+      };
+    }
+
+    // Check if refunded
+    if (data.purchase && data.purchase.refunded) {
+      return {
+        valid: false,
+        error: 'This license has been refunded'
+      };
+    }
+
+    // Check if chargebacked
+    if (data.purchase && data.purchase.chargebacked) {
+      return {
+        valid: false,
+        error: 'This license has been chargebacked'
+      };
+    }
+
+    // Determine tier from variant name or use 'standard' as default
+    // Gumroad returns variant info in purchase.variants if product has variants
+    let tier = 'standard';
+    if (data.purchase) {
+      const variantName = data.purchase.variant_name || data.purchase.variants || '';
+      if (typeof variantName === 'string' && variantName.toLowerCase().includes('pro')) {
+        tier = 'pro';
+      }
+    }
+
+    return {
+      valid: true,
+      tier: tier,
+      email: data.purchase?.email || null,
+      purchaseDate: data.purchase?.created_at || null,
+      uses: data.uses || 0
+    };
+  } catch (error) {
+    console.error('[License] Validation error:', error);
+    return {
+      valid: false,
+      error: 'Network error. Please check your connection and try again.'
+    };
+  }
+}
+
+// Activate a license key
+async function activateLicenseKey(licenseKey) {
+  const validation = await validateLicenseKey(licenseKey);
+
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: validation.error
+    };
+  }
+
+  // Update license status
+  const licenseStatus = {
+    status: 'active',
+    tier: validation.tier,
+    trialScrapesRemaining: 0,
+    licenseKey: licenseKey,
+    validatedAt: Date.now(),
+    email: validation.email
+  };
+
+  await chrome.storage.local.set({ licenseStatus });
+
+  return {
+    success: true,
+    tier: validation.tier,
+    email: validation.email
+  };
+}
+
+// Decrement trial scrape count
+async function decrementTrialScrape() {
+  const status = await getLicenseStatus();
+
+  if (status.status !== 'trial') {
+    return { allowed: true, remaining: null };
+  }
+
+  if (status.trialScrapesRemaining <= 0) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  const newRemaining = status.trialScrapesRemaining - 1;
+  const newStatus = {
+    ...status,
+    trialScrapesRemaining: newRemaining,
+    status: newRemaining <= 0 ? 'expired' : 'trial'
+  };
+
+  await chrome.storage.local.set({ licenseStatus: newStatus });
+
+  return { allowed: true, remaining: newRemaining };
+}
+
+// Check if user can scrape
+async function canScrape() {
+  const status = await getLicenseStatus();
+
+  if (status.status === 'active') {
+    return { allowed: true, reason: null };
+  }
+
+  if (status.status === 'trial' && status.trialScrapesRemaining > 0) {
+    return { allowed: true, reason: null };
+  }
+
+  return {
+    allowed: false,
+    reason: status.status === 'expired'
+      ? 'Your trial has ended. Purchase a license to continue.'
+      : 'License is not valid. Please enter a valid license key.'
+  };
+}
+
+// Check if user can export to Google Sheets (Pro tier only)
+async function canExportToSheets() {
+  const status = await getLicenseStatus();
+
+  // Trial users get full access (including Sheets) during trial
+  if (status.status === 'trial' && status.trialScrapesRemaining > 0) {
+    return { allowed: true, reason: null };
+  }
+
+  // Active Pro users can export
+  if (status.status === 'active' && status.tier === 'pro') {
+    return { allowed: true, reason: null };
+  }
+
+  // Active Standard users cannot
+  if (status.status === 'active' && status.tier === 'standard') {
+    return {
+      allowed: false,
+      reason: 'Google Sheets export is a Pro feature. Upgrade to Pro to unlock.'
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: 'Please purchase a license to use this feature.'
+  };
+}
+
 // Email extraction regex patterns
 const EMAIL_PATTERNS = [
   // Standard email pattern
@@ -103,10 +315,14 @@ async function sendNotification(title, message) {
 }
 
 // Handle extension installation
-chrome.runtime.onInstalled.addListener((details) => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
     console.log('Google Maps Lead Scraper installed');
-    chrome.storage.local.set({
+
+    // Initialize license state for new users
+    await initializeLicenseState();
+
+    await chrome.storage.local.set({
       scrapedData: [],
       isScrapin: false,
       isExtractingEmails: false,
@@ -118,6 +334,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     });
   } else if (details.reason === 'update') {
     console.log('Google Maps Lead Scraper updated to version', chrome.runtime.getManifest().version);
+    // Initialize license state if not present (for users updating from older version)
+    await initializeLicenseState();
   }
 });
 
@@ -429,6 +647,11 @@ function dataToRows(data, exportFields) {
         }
         return '';
       }
+      // Prefix phone with single quote to prevent formula interpretation
+      if (header === 'phone') {
+        const phone = row.phone || '';
+        return phone ? `'${phone}` : '';
+      }
       return row[header] || '';
     });
   });
@@ -671,9 +894,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'exportToSheets') {
-    exportToGoogleSheets(message.data, message.exportFields, message.option, message.searchQuery)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
+    // Check if user can export to Sheets (Pro feature)
+    (async () => {
+      const sheetsAccess = await canExportToSheets();
+      if (!sheetsAccess.allowed) {
+        sendResponse({ success: false, error: sheetsAccess.reason, proRequired: true });
+        return;
+      }
+
+      const result = await exportToGoogleSheets(message.data, message.exportFields, message.option, message.searchQuery);
+      sendResponse(result);
+    })();
+    return true;
+  }
+
+  // License management actions
+  if (message.action === 'getLicenseStatus') {
+    getLicenseStatus().then(status => sendResponse(status));
+    return true;
+  }
+
+  if (message.action === 'activateLicense') {
+    activateLicenseKey(message.licenseKey).then(result => sendResponse(result));
+    return true;
+  }
+
+  if (message.action === 'canScrape') {
+    canScrape().then(result => sendResponse(result));
+    return true;
+  }
+
+  if (message.action === 'decrementTrial') {
+    decrementTrialScrape().then(result => sendResponse(result));
+    return true;
+  }
+
+  if (message.action === 'canExportToSheets') {
+    canExportToSheets().then(result => sendResponse(result));
     return true;
   }
 

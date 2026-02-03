@@ -34,6 +34,25 @@ const sheetsStatus = document.getElementById('sheetsStatus');
 const sheetsStatusText = document.getElementById('sheetsStatusText');
 const clearResultsBtn = document.getElementById('clearResultsBtn');
 
+// Trial/License DOM Elements
+const trialBanner = document.getElementById('trialBanner');
+const trialCount = document.getElementById('trialCount');
+const upgradeFromBanner = document.getElementById('upgradeFromBanner');
+const licenseBadge = document.getElementById('licenseBadge');
+const badgeTier = document.getElementById('badgeTier');
+const trialEndedSection = document.getElementById('trialEndedSection');
+const statusSection = document.getElementById('statusSection');
+const licenseKeyInput = document.getElementById('licenseKeyInput');
+const activateLicenseBtn = document.getElementById('activateLicenseBtn');
+const licenseError = document.getElementById('licenseError');
+const enterLicenseBtn = document.getElementById('enterLicenseBtn');
+const licenseModal = document.getElementById('licenseModal');
+const closeLicenseModalBtn = document.getElementById('closeLicenseModalBtn');
+const modalLicenseInput = document.getElementById('modalLicenseInput');
+const modalLicenseError = document.getElementById('modalLicenseError');
+const cancelLicenseBtn = document.getElementById('cancelLicenseBtn');
+const confirmLicenseBtn = document.getElementById('confirmLicenseBtn');
+
 // State
 let isScrapin = false;
 let isExtractingEmails = false;
@@ -54,11 +73,82 @@ let exportFields = {
   googleMapsUrl: true
 };
 
+// License State
+let licenseStatus = {
+  status: 'trial',
+  tier: null,
+  trialScrapesRemaining: 3,
+  licenseKey: null,
+  validatedAt: null,
+  email: null
+};
+
 // Initialize popup
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadLicenseStatus();
   await loadStoredData();
   await checkCurrentTabStatus();
 });
+
+// Load license status from background
+async function loadLicenseStatus() {
+  try {
+    const status = await chrome.runtime.sendMessage({ action: 'getLicenseStatus' });
+    if (status) {
+      licenseStatus = status;
+      updateLicenseUI();
+    }
+  } catch (error) {
+    console.error('Error loading license status:', error);
+  }
+}
+
+// Update UI based on license status
+function updateLicenseUI() {
+  // Hide all license-related sections first
+  trialBanner.style.display = 'none';
+  licenseBadge.style.display = 'none';
+  trialEndedSection.style.display = 'none';
+  statusSection.style.display = 'block';
+
+  if (licenseStatus.status === 'active') {
+    // Licensed user - show badge
+    licenseBadge.style.display = 'flex';
+    badgeTier.textContent = licenseStatus.tier === 'pro' ? 'Pro' : 'Standard';
+    badgeTier.className = licenseStatus.tier === 'pro' ? 'badge-tier pro' : 'badge-tier';
+    enterLicenseBtn.style.display = 'none';
+
+    // Show/hide sheets button based on tier
+    updateSheetsButtonForTier();
+  } else if (licenseStatus.status === 'trial' && licenseStatus.trialScrapesRemaining > 0) {
+    // Active trial - show banner
+    trialBanner.style.display = 'flex';
+    trialCount.textContent = licenseStatus.trialScrapesRemaining;
+    enterLicenseBtn.style.display = 'block';
+  } else {
+    // Trial expired or invalid
+    trialBanner.style.display = 'none';
+    trialEndedSection.style.display = 'block';
+    statusSection.style.display = 'none';
+    enterLicenseBtn.style.display = 'none';
+
+    // Hide main action buttons when trial ended
+    document.querySelector('.button-section').style.display = 'none';
+    document.querySelector('.options-section').style.display = 'none';
+  }
+}
+
+// Update Sheets button based on tier
+function updateSheetsButtonForTier() {
+  if (licenseStatus.status === 'active' && licenseStatus.tier === 'standard') {
+    // Standard tier - disable Sheets and show Pro badge
+    exportSheetsBtn.classList.add('disabled-pro');
+    exportSheetsBtn.title = 'Google Sheets export is a Pro feature';
+  } else {
+    exportSheetsBtn.classList.remove('disabled-pro');
+    exportSheetsBtn.title = '';
+  }
+}
 
 // Auto-extract checkbox handler
 autoExtractCheckbox.addEventListener('change', async () => {
@@ -84,6 +174,82 @@ notificationsCheckbox.addEventListener('change', async () => {
   notificationsEnabled = notificationsCheckbox.checked;
   await chrome.storage.local.set({ notificationsEnabled });
 });
+
+// License activation handlers
+upgradeFromBanner.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'https://quenitolabs.gumroad.com/l/maps-lead-scraper' });
+});
+
+enterLicenseBtn.addEventListener('click', () => {
+  licenseModal.style.display = 'flex';
+  modalLicenseInput.value = '';
+  modalLicenseError.style.display = 'none';
+});
+
+closeLicenseModalBtn.addEventListener('click', () => {
+  licenseModal.style.display = 'none';
+});
+
+cancelLicenseBtn.addEventListener('click', () => {
+  licenseModal.style.display = 'none';
+});
+
+// Activate license from modal
+confirmLicenseBtn.addEventListener('click', async () => {
+  const key = modalLicenseInput.value.trim();
+  await activateLicense(key, modalLicenseError, confirmLicenseBtn);
+});
+
+// Activate license from trial-ended section
+activateLicenseBtn.addEventListener('click', async () => {
+  const key = licenseKeyInput.value.trim();
+  await activateLicense(key, licenseError, activateLicenseBtn);
+});
+
+// License activation function
+async function activateLicense(licenseKey, errorElement, button) {
+  if (!licenseKey) {
+    errorElement.textContent = 'Please enter a license key';
+    errorElement.style.display = 'block';
+    return;
+  }
+
+  // Disable button and show loading state
+  const originalText = button.textContent;
+  button.textContent = 'Activating...';
+  button.disabled = true;
+  errorElement.style.display = 'none';
+
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: 'activateLicense',
+      licenseKey: licenseKey
+    });
+
+    if (result.success) {
+      // Success - reload license status and update UI
+      await loadLicenseStatus();
+      licenseModal.style.display = 'none';
+
+      // Show success in the main UI
+      if (licenseStatus.status === 'active') {
+        // Re-show hidden sections
+        document.querySelector('.button-section').style.display = 'flex';
+        document.querySelector('.options-section').style.display = 'block';
+      }
+    } else {
+      errorElement.textContent = result.error || 'Invalid license key';
+      errorElement.style.display = 'block';
+    }
+  } catch (error) {
+    console.error('License activation error:', error);
+    errorElement.textContent = 'Error activating license. Please try again.';
+    errorElement.style.display = 'block';
+  }
+
+  button.textContent = originalText;
+  button.disabled = false;
+}
 
 // Clear history button handler (duplicate detection)
 clearHistoryBtn.addEventListener('click', async () => {
@@ -149,6 +315,13 @@ fieldCheckboxes.forEach(checkbox => {
 
 // Google Sheets export handlers
 exportSheetsBtn.addEventListener('click', async () => {
+  // Check if user can export to Sheets (Pro feature for licensed users)
+  const sheetsAccess = await chrome.runtime.sendMessage({ action: 'canExportToSheets' });
+  if (!sheetsAccess.allowed) {
+    showError(sheetsAccess.reason);
+    return;
+  }
+
   // Check if we have a last sheet ID to show append option
   const result = await chrome.storage.local.get(['lastSheetId']);
   if (result.lastSheetId) {
@@ -479,6 +652,33 @@ startStopBtn.addEventListener('click', async () => {
       isScrapin = false;
       await chrome.storage.local.set({ isScrapin: false });
     } else {
+      // Check if user can scrape
+      const canScrapeResult = await chrome.runtime.sendMessage({ action: 'canScrape' });
+      if (!canScrapeResult.allowed) {
+        showError(canScrapeResult.reason);
+        // Refresh license UI in case trial just expired
+        await loadLicenseStatus();
+        return;
+      }
+
+      // Decrement trial if applicable
+      if (licenseStatus.status === 'trial') {
+        const decrementResult = await chrome.runtime.sendMessage({ action: 'decrementTrial' });
+        if (!decrementResult.allowed) {
+          showError('Your trial has ended. Please purchase a license.');
+          await loadLicenseStatus();
+          return;
+        }
+        // Update local state and UI
+        licenseStatus.trialScrapesRemaining = decrementResult.remaining;
+        trialCount.textContent = decrementResult.remaining;
+
+        // Check if trial just expired
+        if (decrementResult.remaining <= 0) {
+          licenseStatus.status = 'expired';
+        }
+      }
+
       // Start scraping - clear all previous state
       isScrapin = true;
       isExtractingEmails = false;
@@ -659,6 +859,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     exportSheetsBtn.disabled = scrapedData.length === 0;
     updateExtractEmailsButtonState();
 
+    // Refresh license UI (in case trial just expired after this scrape)
+    // Wrapped in try-catch to prevent blocking auto-extract
+    try {
+      loadLicenseStatus();
+    } catch (e) {
+      console.error('Error refreshing license status:', e);
+    }
+
     // Show final duplicates count if any
     if (message.duplicatesSkipped && message.duplicatesSkipped > 0) {
       currentDuplicatesSkipped = message.duplicatesSkipped;
@@ -706,11 +914,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // Auto-trigger email extraction if enabled and data has websites
     // Note: Scraping-complete notifications are now handled by the service worker
+    console.log('[AutoExtract] Checking conditions:', { autoExtractEmails, dataLength: scrapedData.length });
     if (autoExtractEmails && scrapedData.length > 0) {
       const hasWebsites = scrapedData.some(b => b.website);
+      console.log('[AutoExtract] Has websites:', hasWebsites);
       if (hasWebsites) {
         // Small delay to let UI update, then trigger email extraction directly
+        console.log('[AutoExtract] Starting email extraction in 500ms...');
         setTimeout(async () => {
+          console.log('[AutoExtract] Triggering startEmailExtraction()');
           await startEmailExtraction();
         }, 500);
       }
