@@ -1,0 +1,52 @@
+Maps Lead Scraper - License Agreement
+======================================
+
+Copyright (c) 2026 Quenito Labs. All rights reserved.
+
+TERMS OF USE
+
+By purchasing and using this software, you agree to the following terms:
+
+1. PERSONAL LICENSE
+   - This license grants you the right to use Maps Lead Scraper on your own 
+     computer(s) for personal or business purposes.
+   - One license = one user. Each team member requires their own license.
+
+2. WHAT YOU CAN DO
+   - Use the extension for your own lead generation activities
+   - Use the data you extract for any lawful purpose
+   - Install on multiple devices that you personally use
+
+3. WHAT YOU CANNOT DO
+   - Resell, redistribute, or share this extension with others
+   - Upload the extension to the Chrome Web Store or any other marketplace
+   - Modify and resell the extension as your own product
+   - Share your license key with others
+   - Reverse engineer, decompile, or create derivative works for distribution
+
+4. REFUNDS
+   - 30-day money-back guarantee. Contact support@quenitolabs.com for refunds.
+
+5. UPDATES
+   - Your purchase includes free lifetime updates to keep the extension 
+     working with Google Maps changes.
+
+6. SUPPORT
+   - Standard tier: Next-day email support
+   - Pro tier: Same-day email support
+
+7. DISCLAIMER
+   - This software is provided "as is" without warranty of any kind.
+   - Quenito Labs is not responsible for how you use the extracted data.
+   - You are responsible for complying with applicable laws and website 
+     terms of service when using this tool.
+
+8. TERMINATION
+   - This license is terminated if you violate any of these terms.
+   - Upon termination, you must delete all copies of the extension.
+
+For questions or support: support@quenitolabs.com
+
+Thank you for supporting Quenito Labs!
+
+https://quenitolabs.gumroad.com

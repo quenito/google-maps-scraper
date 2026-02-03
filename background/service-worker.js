@@ -666,7 +666,8 @@ async function fetchAndExtractEmails(url) {
       error: 'No URL provided',
       pagesScanned: 0,
       contactPageUrl: null,
-      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null }
+      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null },
+      websiteBroken: false // Not broken, just not provided
     };
   }
 
@@ -688,13 +689,15 @@ async function fetchAndExtractEmails(url) {
     const homeResult = await fetchPage(url);
 
     if (!homeResult.success) {
+      console.log(`[Email Extractor] Website broken/unreachable: ${url} - ${homeResult.error}`);
       return {
         success: false,
         emails: [],
         error: homeResult.error,
         pagesScanned: 0,
         contactPageUrl: null,
-        socialUrls: allSocialUrls
+        socialUrls: allSocialUrls,
+        websiteBroken: true // Mark as broken so caller can clear the URL and fall back to social search
       };
     }
 
@@ -796,7 +799,8 @@ async function fetchAndExtractEmails(url) {
       error: null,
       pagesScanned,
       contactPageUrl,
-      socialUrls: allSocialUrls
+      socialUrls: allSocialUrls,
+      websiteBroken: false
     };
   } catch (error) {
     console.warn(`[Email Extractor] Error fetching ${url}:`, error.message);
@@ -806,7 +810,8 @@ async function fetchAndExtractEmails(url) {
       error: error.message,
       pagesScanned: 0,
       contactPageUrl: null,
-      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null }
+      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null },
+      websiteBroken: true // Treat exceptions as broken website
     };
   }
 }
@@ -839,20 +844,95 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
 
     if (business.website) {
       const result = await fetchAndExtractEmails(business.website);
-      results.push({
-        ...business,
-        emails: result.emails,
-        emailError: result.error,
-        pagesScanned: result.pagesScanned,
-        // v2.1: New fields
-        contactPageUrl: result.contactPageUrl || null,
-        facebookUrl: result.socialUrls?.facebookUrl || null,
-        instagramUrl: result.socialUrls?.instagramUrl || null,
-        linkedinUrl: result.socialUrls?.linkedinUrl || null,
-        twitterUrl: result.socialUrls?.twitterUrl || null
-      });
+
+      // Check if website was broken/unreachable
+      if (result.websiteBroken) {
+        console.log(`[Email Extractor] Website broken for "${business.name}" - clearing URL`);
+
+        // Website is broken - clear it and try social search if enabled
+        if (socialSearchEnabled) {
+          console.log(`[Email Extractor] Falling back to social search for "${business.name}"`);
+          const socialResults = await searchGoogleForSocialProfiles(business.name, business.address);
+
+          results.push({
+            ...business,
+            website: null, // Clear broken website
+            emails: socialResults.emails,
+            emailError: socialResults.emails.length > 0 ? null : 'Website broken, searched social',
+            pagesScanned: 0,
+            contactPageUrl: null,
+            facebookUrl: socialResults.facebookUrl,
+            instagramUrl: socialResults.instagramUrl,
+            linkedinUrl: null,
+            twitterUrl: null
+          });
+        } else {
+          results.push({
+            ...business,
+            website: null, // Clear broken website
+            emails: [],
+            emailError: 'Website broken/unreachable',
+            pagesScanned: 0,
+            contactPageUrl: null,
+            facebookUrl: null,
+            instagramUrl: null,
+            linkedinUrl: null,
+            twitterUrl: null
+          });
+        }
+      } else {
+        // Website worked - check if we found social links
+        const hasSocialLinks = result.socialUrls?.facebookUrl || result.socialUrls?.instagramUrl ||
+                               result.socialUrls?.linkedinUrl || result.socialUrls?.twitterUrl;
+
+        let finalEmails = [...result.emails];
+        let finalSocialUrls = { ...result.socialUrls };
+
+        // If no social links found on website, try Google search (when enabled)
+        if (!hasSocialLinks && socialSearchEnabled) {
+          console.log(`[Email Extractor] No social links on website for "${business.name}" - searching Google`);
+          const socialResults = await searchGoogleForSocialProfiles(business.name, business.address);
+
+          // Merge social URLs found via Google
+          if (socialResults.facebookUrl) finalSocialUrls.facebookUrl = socialResults.facebookUrl;
+          if (socialResults.instagramUrl) finalSocialUrls.instagramUrl = socialResults.instagramUrl;
+
+          // Add any emails found from social profiles
+          socialResults.emails.forEach(email => {
+            if (!finalEmails.includes(email)) {
+              finalEmails.push(email);
+            }
+          });
+        }
+
+        // If we have a Facebook URL but no email yet, try to extract from Facebook
+        if (finalEmails.length === 0 && finalSocialUrls.facebookUrl) {
+          console.log(`[Email Extractor] Have Facebook URL but no email - fetching: ${finalSocialUrls.facebookUrl}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const fbResult = await fetchPage(finalSocialUrls.facebookUrl);
+          if (fbResult.success) {
+            const fbEmails = extractEmailsFromHTML(fbResult.html);
+            if (fbEmails.length > 0) {
+              console.log(`[Email Extractor] Found ${fbEmails.length} emails on Facebook!`);
+              finalEmails.push(...fbEmails);
+            }
+          }
+        }
+
+        results.push({
+          ...business,
+          emails: finalEmails,
+          emailError: result.error,
+          pagesScanned: result.pagesScanned,
+          contactPageUrl: result.contactPageUrl || null,
+          facebookUrl: finalSocialUrls.facebookUrl || null,
+          instagramUrl: finalSocialUrls.instagramUrl || null,
+          linkedinUrl: finalSocialUrls.linkedinUrl || null,
+          twitterUrl: finalSocialUrls.twitterUrl || null
+        });
+      }
     } else {
-      // No website - try Google search for social profiles if enabled (v2.1)
+      // No website - try Google search for social profiles if enabled
       if (socialSearchEnabled) {
         console.log(`[Email Extractor] No website for "${business.name}" - searching Google for social profiles`);
 
@@ -861,9 +941,8 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
         results.push({
           ...business,
           emails: socialResults.emails,
-          emailError: socialResults.emails.length > 0 ? null : 'No website (found via social search)',
+          emailError: socialResults.emails.length > 0 ? null : 'No website (searched social)',
           pagesScanned: 0,
-          // v2.1: Social profiles found via Google search
           contactPageUrl: null,
           facebookUrl: socialResults.facebookUrl,
           instagramUrl: socialResults.instagramUrl,
@@ -876,7 +955,6 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
           emails: [],
           emailError: 'No website',
           pagesScanned: 0,
-          // v2.1: New fields (empty for businesses without websites)
           contactPageUrl: null,
           facebookUrl: null,
           instagramUrl: null,
