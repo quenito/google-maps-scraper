@@ -293,6 +293,40 @@ const CONTACT_PAGE_PATTERNS = [
   /support/i
 ];
 
+// Direct contact page paths to try (Feature A: v2.1)
+const DIRECT_CONTACT_PATHS = [
+  '/contact',
+  '/contact-us',
+  '/about',
+  '/about-us'
+];
+
+// Social media domain patterns (Feature C: v2.1)
+const SOCIAL_MEDIA_PATTERNS = {
+  facebook: {
+    domain: /(?:www\.)?facebook\.com/i,
+    // Exclude share/intent links, only match profile/page URLs
+    exclude: /facebook\.com\/(?:sharer|share|dialog|plugins|login|pages\/create)/i,
+    // Match profile/page patterns
+    match: /facebook\.com\/(?:people\/|pages\/|profile\.php\?id=|groups\/)?[a-zA-Z0-9._-]+\/?/i
+  },
+  instagram: {
+    domain: /(?:www\.)?instagram\.com/i,
+    exclude: /instagram\.com\/(?:accounts|explore|direct|stories|p\/)/i,
+    match: /instagram\.com\/[a-zA-Z0-9._]+\/?/i
+  },
+  linkedin: {
+    domain: /(?:www\.)?linkedin\.com/i,
+    exclude: /linkedin\.com\/(?:share|shareArticle|pulse|learning)/i,
+    match: /linkedin\.com\/(?:company|in)\/[a-zA-Z0-9._-]+\/?/i
+  },
+  twitter: {
+    domain: /(?:www\.)?(?:twitter\.com|x\.com)/i,
+    exclude: /(?:twitter|x)\.com\/(?:intent|share|home|search|hashtag)/i,
+    match: /(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/?/i
+  }
+};
+
 // Send browser notification
 async function sendNotification(title, message) {
   try {
@@ -452,6 +486,58 @@ function findContactPageUrls(html, baseUrl) {
   return Array.from(contactUrls).slice(0, 3); // Limit to 3 contact pages max
 }
 
+// Extract social media profile URLs from HTML (Feature C: v2.1)
+function extractSocialMediaUrls(html) {
+  const socialUrls = {
+    facebookUrl: null,
+    instagramUrl: null,
+    linkedinUrl: null,
+    twitterUrl: null
+  };
+
+  try {
+    // Find all href attributes in the HTML
+    const hrefPattern = /href=["']([^"']+)["']/gi;
+    let match;
+
+    while ((match = hrefPattern.exec(html)) !== null) {
+      const url = match[1];
+
+      // Check each social media platform
+      for (const [platform, patterns] of Object.entries(SOCIAL_MEDIA_PATTERNS)) {
+        const fieldName = `${platform}Url`;
+
+        // Skip if we already found a URL for this platform
+        if (socialUrls[fieldName]) continue;
+
+        // Check if URL matches the domain
+        if (!patterns.domain.test(url)) continue;
+
+        // Skip if it matches exclude patterns (share buttons, etc.)
+        if (patterns.exclude && patterns.exclude.test(url)) continue;
+
+        // Check if it matches the profile/page pattern
+        if (patterns.match.test(url)) {
+          // Clean up the URL
+          let cleanUrl = url;
+          // Ensure it starts with https://
+          if (!cleanUrl.startsWith('http')) {
+            cleanUrl = 'https://' + cleanUrl.replace(/^\/\//, '');
+          }
+          // Remove trailing slashes and query params for consistency
+          cleanUrl = cleanUrl.split('?')[0].replace(/\/+$/, '');
+
+          socialUrls[fieldName] = cleanUrl;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Social Media Extractor] Error:', e.message);
+  }
+
+  return socialUrls;
+}
+
 // Fetch a single page
 async function fetchPage(url) {
   try {
@@ -480,9 +566,17 @@ async function fetchPage(url) {
 }
 
 // Fetch a website and extract emails (including contact pages)
+// v2.1: Enhanced with contact page URL capture, social media extraction, and Facebook fallback
 async function fetchAndExtractEmails(url) {
   if (!url || url === 'null' || url === 'undefined') {
-    return { success: false, emails: [], error: 'No URL provided', pagesScanned: 0 };
+    return {
+      success: false,
+      emails: [],
+      error: 'No URL provided',
+      pagesScanned: 0,
+      contactPageUrl: null,
+      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null }
+    };
   }
 
   try {
@@ -495,15 +589,26 @@ async function fetchAndExtractEmails(url) {
 
     const allEmails = new Set();
     let pagesScanned = 0;
+    let contactPageUrl = null;
+    let allSocialUrls = { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null };
+    let allHtmlContent = ''; // Accumulate HTML for social media extraction
 
     // Fetch homepage
     const homeResult = await fetchPage(url);
 
     if (!homeResult.success) {
-      return { success: false, emails: [], error: homeResult.error, pagesScanned: 0 };
+      return {
+        success: false,
+        emails: [],
+        error: homeResult.error,
+        pagesScanned: 0,
+        contactPageUrl: null,
+        socialUrls: allSocialUrls
+      };
     }
 
     pagesScanned++;
+    allHtmlContent += homeResult.html;
 
     // Extract emails from homepage
     const homeEmails = extractEmailsFromHTML(homeResult.html);
@@ -511,12 +616,30 @@ async function fetchAndExtractEmails(url) {
 
     console.log(`[Email Extractor] Found ${homeEmails.length} emails on homepage`);
 
-    // Find contact pages
-    const contactUrls = findContactPageUrls(homeResult.html, url);
-    console.log(`[Email Extractor] Found ${contactUrls.length} potential contact pages`);
+    // Extract social media URLs from homepage (Feature C: v2.1)
+    const homeSocialUrls = extractSocialMediaUrls(homeResult.html);
+    Object.entries(homeSocialUrls).forEach(([key, value]) => {
+      if (value && !allSocialUrls[key]) {
+        allSocialUrls[key] = value;
+      }
+    });
 
-    // Fetch contact pages
-    for (const contactUrl of contactUrls) {
+    // Find contact pages from links on homepage
+    const contactUrls = findContactPageUrls(homeResult.html, url);
+    console.log(`[Email Extractor] Found ${contactUrls.length} potential contact pages from links`);
+
+    // Also try direct contact page paths (Feature A: v2.1)
+    const baseUrl = new URL(url);
+    const directContactUrls = DIRECT_CONTACT_PATHS.map(path => baseUrl.origin + path);
+
+    // Combine and deduplicate contact URLs (linked pages first, then direct paths)
+    const allContactUrls = [...new Set([...contactUrls, ...directContactUrls])];
+
+    // Fetch contact/about pages
+    for (const contactUrl of allContactUrls) {
+      // Skip if we've already scanned 5 pages total
+      if (pagesScanned >= 5) break;
+
       console.log(`[Email Extractor] Fetching contact page: ${contactUrl}`);
 
       // Small delay between requests
@@ -526,19 +649,74 @@ async function fetchAndExtractEmails(url) {
 
       if (contactResult.success) {
         pagesScanned++;
+        allHtmlContent += contactResult.html;
+
+        // Store the first valid contact page URL found (Feature B: v2.1)
+        if (!contactPageUrl) {
+          contactPageUrl = contactUrl;
+          console.log(`[Email Extractor] Found valid contact page: ${contactPageUrl}`);
+        }
+
         const contactEmails = extractEmailsFromHTML(contactResult.html);
         contactEmails.forEach(email => allEmails.add(email));
         console.log(`[Email Extractor] Found ${contactEmails.length} emails on ${contactUrl}`);
+
+        // Extract social media URLs from contact page (Feature C: v2.1)
+        const pageSocialUrls = extractSocialMediaUrls(contactResult.html);
+        Object.entries(pageSocialUrls).forEach(([key, value]) => {
+          if (value && !allSocialUrls[key]) {
+            allSocialUrls[key] = value;
+          }
+        });
+      }
+    }
+
+    // Feature D: Facebook Email Extraction (v2.1)
+    // If no email found on website and we have a Facebook URL, try to extract email from Facebook
+    if (allEmails.size === 0 && allSocialUrls.facebookUrl) {
+      console.log(`[Email Extractor] No email found on website, trying Facebook: ${allSocialUrls.facebookUrl}`);
+
+      await new Promise(resolve => setTimeout(resolve, 500)); // Rate limiting
+
+      const facebookResult = await fetchPage(allSocialUrls.facebookUrl);
+
+      if (facebookResult.success) {
+        pagesScanned++;
+        const facebookEmails = extractEmailsFromHTML(facebookResult.html);
+        facebookEmails.forEach(email => allEmails.add(email));
+
+        if (facebookEmails.length > 0) {
+          console.log(`[Email Extractor] Found ${facebookEmails.length} emails on Facebook page!`);
+        } else {
+          console.log(`[Email Extractor] No email found on Facebook page`);
+        }
+      } else {
+        console.log(`[Email Extractor] Could not fetch Facebook page: ${facebookResult.error}`);
       }
     }
 
     const emails = Array.from(allEmails);
     console.log(`[Email Extractor] Total: ${emails.length} unique emails from ${pagesScanned} pages for ${url}`);
+    console.log(`[Email Extractor] Social URLs found:`, allSocialUrls);
 
-    return { success: true, emails, error: null, pagesScanned };
+    return {
+      success: true,
+      emails,
+      error: null,
+      pagesScanned,
+      contactPageUrl,
+      socialUrls: allSocialUrls
+    };
   } catch (error) {
     console.warn(`[Email Extractor] Error fetching ${url}:`, error.message);
-    return { success: false, emails: [], error: error.message, pagesScanned: 0 };
+    return {
+      success: false,
+      emails: [],
+      error: error.message,
+      pagesScanned: 0,
+      contactPageUrl: null,
+      socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null }
+    };
   }
 }
 
@@ -573,14 +751,26 @@ async function extractEmailsFromBusinesses(businesses, sendProgress) {
         ...business,
         emails: result.emails,
         emailError: result.error,
-        pagesScanned: result.pagesScanned
+        pagesScanned: result.pagesScanned,
+        // v2.1: New fields
+        contactPageUrl: result.contactPageUrl || null,
+        facebookUrl: result.socialUrls?.facebookUrl || null,
+        instagramUrl: result.socialUrls?.instagramUrl || null,
+        linkedinUrl: result.socialUrls?.linkedinUrl || null,
+        twitterUrl: result.socialUrls?.twitterUrl || null
       });
     } else {
       results.push({
         ...business,
         emails: [],
         emailError: 'No website',
-        pagesScanned: 0
+        pagesScanned: 0,
+        // v2.1: New fields (empty for businesses without websites)
+        contactPageUrl: null,
+        facebookUrl: null,
+        instagramUrl: null,
+        linkedinUrl: null,
+        twitterUrl: null
       });
     }
 
@@ -624,29 +814,49 @@ function dataToRows(data, exportFields) {
   const hasEmails = data.some(row => row.emails && row.emails.length > 0);
 
   // Build headers based on selected fields
+  // v2.1: Added contactPageUrl, facebookUrl, instagramUrl, linkedinUrl, twitterUrl
   const allFields = hasEmails
-    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'googleMapsUrl']
-    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'googleMapsUrl'];
+    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl']
+    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl'];
 
   const headers = allFields.filter(field => {
     if (field === 'name') return true;
     return exportFields[field] !== false;
   });
 
+  // Fields that should be rendered as clickable hyperlinks
+  const hyperlinkFields = ['googleMapsUrl', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl'];
+
   // Build data rows
   const rows = data.map(row => {
     const email = row.emails && row.emails.length > 0 ? row.emails.join('; ') : '';
     return headers.map(header => {
       if (header === 'email') return email;
-      // Format googleMapsUrl as a clickable hyperlink with business name
-      if (header === 'googleMapsUrl') {
-        const url = row.googleMapsUrl || '';
-        const name = row.name || 'View on Maps';
+
+      // Format URL fields as clickable hyperlinks (v2.1)
+      if (hyperlinkFields.includes(header)) {
+        const url = row[header] || '';
         if (url) {
-          return `=HYPERLINK("${escapeForHyperlink(url)}", "${escapeForHyperlink(name)}")`;
+          // Use business name for Maps link, domain/platform name for others
+          let linkText = url;
+          if (header === 'googleMapsUrl') {
+            linkText = row.name || 'View on Maps';
+          } else if (header === 'contactPageUrl') {
+            linkText = 'Contact Page';
+          } else if (header === 'facebookUrl') {
+            linkText = 'Facebook';
+          } else if (header === 'instagramUrl') {
+            linkText = 'Instagram';
+          } else if (header === 'linkedinUrl') {
+            linkText = 'LinkedIn';
+          } else if (header === 'twitterUrl') {
+            linkText = 'Twitter/X';
+          }
+          return `=HYPERLINK("${escapeForHyperlink(url)}", "${escapeForHyperlink(linkText)}")`;
         }
         return '';
       }
+
       // Prefix phone with single quote to prevent formula interpretation
       if (header === 'phone') {
         const phone = row.phone || '';

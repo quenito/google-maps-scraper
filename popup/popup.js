@@ -70,6 +70,12 @@ let exportFields = {
   address: true,
   phone: true,
   website: true,
+  // v2.1: New fields
+  contactPageUrl: true,
+  facebookUrl: true,
+  instagramUrl: true,
+  linkedinUrl: true,
+  twitterUrl: true,
   googleMapsUrl: true
 };
 
@@ -775,10 +781,10 @@ function convertToCSV(data) {
   // Check if data has emails
   const hasEmails = data.some(row => row.emails && row.emails.length > 0);
 
-  // All possible headers in order
+  // All possible headers in order (v2.1: added contactPageUrl, facebookUrl, instagramUrl, linkedinUrl, twitterUrl)
   const allHeaders = hasEmails
-    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'googleMapsUrl']
-    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'googleMapsUrl'];
+    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl']
+    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl'];
 
   // Filter headers based on exportFields selection (name is always included)
   const headers = allHeaders.filter(header => {
