@@ -8,6 +8,9 @@
 const TRIAL_SCRAPES = 3;
 const GUMROAD_PRODUCT_ID = 'iejae'; // Gumroad product ID for Maps Lead Scraper
 
+// Email extraction cancellation flag
+let emailExtractionCancelled = false;
+
 // License status object structure
 // {
 //   status: 'trial' | 'active' | 'expired' | 'invalid',
@@ -823,6 +826,12 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
   const delay = 500; // Reduced delay since we have delays within fetchAndExtractEmails
 
   for (let i = 0; i < businesses.length; i++) {
+    // Check if extraction was cancelled
+    if (emailExtractionCancelled) {
+      console.log(`[Email Extractor] Cancelled at ${i}/${businesses.length}`);
+      break;
+    }
+
     const business = businesses[i];
 
     const progressData = {
@@ -1207,6 +1216,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const businesses = message.businesses || [];
     const socialSearchEnabled = message.socialSearchEnabled || false; // v2.1: Google search for no-website businesses
 
+    // Reset cancellation flag
+    emailExtractionCancelled = false;
+
     console.log(`[Email Extractor] Starting extraction for ${businesses.length} businesses (socialSearch: ${socialSearchEnabled})`);
 
     // Process asynchronously
@@ -1221,9 +1233,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       }, socialSearchEnabled); // v2.1: Pass social search flag
 
-      // Send completion message
+      // Check if extraction was cancelled
+      const wasCancelled = emailExtractionCancelled;
+
+      // Send completion message (includes partial results if cancelled)
       chrome.runtime.sendMessage({
-        type: 'emailComplete',
+        type: wasCancelled ? 'emailCancelled' : 'emailComplete',
         data: results
       }).catch(() => {
         // Popup might be closed
@@ -1233,14 +1248,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const emailsFound = results.filter(b => b.emails && b.emails.length > 0).length;
 
       // Send browser notification
-      await sendNotification(
-        'Email Extraction Complete',
-        `Found emails for ${emailsFound} of ${results.length} businesses`
-      );
+      if (!wasCancelled) {
+        await sendNotification(
+          'Email Extraction Complete',
+          `Found emails for ${emailsFound} of ${results.length} businesses`
+        );
+      }
 
       // Store results and clear progress state
       chrome.storage.local.set({
-        scrapedDataWithEmails: results,
+        scrapedDataWithEmails: results.length > 0 ? results : [],
         isExtractingEmails: false,
         emailExtractionProgress: null
       });
@@ -1249,6 +1266,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
 
     return true; // Keep channel open for async response
+  }
+
+  if (message.action === 'cancelEmailExtraction') {
+    emailExtractionCancelled = true;
+    console.log('[Email Extractor] Cancellation requested');
+    sendResponse({ status: 'cancelling' });
+    return true;
   }
 
   if (message.action === 'fetchSingleEmail') {

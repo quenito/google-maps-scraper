@@ -33,6 +33,7 @@ const confirmSheetsBtn = document.getElementById('confirmSheetsBtn');
 const appendOption = document.getElementById('appendOption');
 const sheetsStatus = document.getElementById('sheetsStatus');
 const sheetsStatusText = document.getElementById('sheetsStatusText');
+const cancelEmailBtn = document.getElementById('cancelEmailBtn');
 const clearResultsBtn = document.getElementById('clearResultsBtn');
 
 // Trial/License DOM Elements
@@ -526,6 +527,9 @@ async function loadStoredData() {
     if (result.isExtractingEmails && result.emailExtractionProgress) {
       isExtractingEmails = true;
       showEmailSection();
+      cancelEmailBtn.style.display = 'inline-block';
+      cancelEmailBtn.textContent = 'Cancel';
+      cancelEmailBtn.disabled = false;
       updateEmailProgress(
         result.emailExtractionProgress.current,
         result.emailExtractionProgress.total,
@@ -745,6 +749,9 @@ async function startEmailExtraction() {
   await chrome.storage.local.set({ isExtractingEmails: true });
 
   showEmailSection();
+  cancelEmailBtn.style.display = 'inline-block';
+  cancelEmailBtn.textContent = 'Cancel';
+  cancelEmailBtn.disabled = false;
   updateEmailProgress(0, scrapedData.length, 'Starting...');
   updateUI();
 
@@ -775,6 +782,17 @@ async function startEmailExtraction() {
 // Extract Emails button click handler
 extractEmailsBtn.addEventListener('click', async () => {
   await startEmailExtraction();
+});
+
+// Cancel Email Extraction button click handler
+cancelEmailBtn.addEventListener('click', async () => {
+  try {
+    await chrome.runtime.sendMessage({ action: 'cancelEmailExtraction' });
+    cancelEmailBtn.textContent = 'Cancelling...';
+    cancelEmailBtn.disabled = true;
+  } catch (error) {
+    console.error('Error cancelling email extraction:', error);
+  }
 });
 
 // Export CSV button click handler
@@ -977,6 +995,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const emailsFound = scrapedDataWithEmails.filter(b => b.emails && b.emails.length > 0).length;
     emailStatus.textContent = `Done! Found emails for ${emailsFound} businesses`;
     currentBusiness.textContent = '';
+    cancelEmailBtn.style.display = 'none';
 
     // Update last search history entry with email count
     (async () => {
@@ -997,5 +1016,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     updateUI();
     // Note: Email extraction complete notification is sent by the service worker
+  } else if (message.type === 'emailCancelled') {
+    // Email extraction was cancelled
+    isExtractingEmails = false;
+    const partialData = message.data || [];
+    if (partialData.length > 0) {
+      scrapedDataWithEmails = partialData;
+    }
+    chrome.storage.local.set({ isExtractingEmails: false, scrapedDataWithEmails: scrapedDataWithEmails });
+
+    const emailsFound = partialData.filter(b => b.emails && b.emails.length > 0).length;
+    emailStatus.textContent = `Cancelled. Found emails for ${emailsFound} of ${partialData.length} processed`;
+    currentBusiness.textContent = '';
+    cancelEmailBtn.style.display = 'none';
+
+    updateUI();
   }
 });

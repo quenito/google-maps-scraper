@@ -302,12 +302,40 @@ header h1 {
   width: 0%;
 }
 
+.email-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .current-business {
   font-size: 11px;
   color: #5f6368;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-cancel {
+  background: none;
+  border: 1px solid #ea4335;
+  color: #ea4335;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.btn-cancel:hover {
+  background: #ea4335;
+  color: white;
 }
 
 /* Field Selection Section */
