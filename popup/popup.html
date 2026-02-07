@@ -76,11 +76,15 @@
           <span class="duplicate-count" id="duplicateCount">0</span>
           <span class="duplicate-label"> duplicates skipped</span>
         </div>
+        <div class="filtered-status" id="filteredStatus" style="display: none;">
+          <span class="filtered-count" id="filteredCount">0</span>
+          <span class="filtered-label"> filtered out</span>
+        </div>
       </div>
 
       <div class="email-section" id="emailSection" style="display: none;">
         <div class="email-progress">
-          <span class="email-status" id="emailStatus">Extracting emails...</span>
+          <span class="email-status" id="emailStatus">Extracting contact info...</span>
           <span class="email-count" id="emailCount">0/0</span>
         </div>
         <div class="progress-bar">
@@ -97,7 +101,7 @@
       <div class="options-section">
         <label class="checkbox-label" title="Uncheck to manually control collecting email addresses after the scrape has finished">
           <input type="checkbox" id="autoExtractCheckbox" checked>
-          <span>Auto-extract emails after scraping</span>
+          <span>Auto-extract contact info after scraping</span>
         </label>
         <label class="checkbox-label">
           <input type="checkbox" id="notificationsCheckbox" checked>
@@ -107,6 +111,71 @@
           <input type="checkbox" id="socialSearchCheckbox">
           <span>Deep social search (slower, more coverage)</span>
         </label>
+      </div>
+
+      <!-- Pre-Scrape Filters -->
+      <div class="filters-toggle-section">
+        <button class="btn-text" id="toggleFiltersBtn">Scrape Filters ▼</button>
+        <span class="active-filter-badge" id="activeFilterBadge" style="display: none;">0 active</span>
+      </div>
+
+      <div class="filters-section" id="filtersSection" style="display: none;">
+        <div class="filter-row">
+          <label class="filter-label" for="minRatingSelect">Minimum rating</label>
+          <select id="minRatingSelect" class="filter-select">
+            <option value="0">Any</option>
+            <option value="2">2+</option>
+            <option value="3">3+</option>
+            <option value="3.5">3.5+</option>
+            <option value="4">4+</option>
+            <option value="4.5">4.5+</option>
+          </select>
+        </div>
+
+        <div class="filter-row">
+          <label class="filter-label" for="minReviewInput">Minimum reviews</label>
+          <input type="number" id="minReviewInput" class="filter-input-number" min="0" max="99999" step="1" value="0" placeholder="0">
+        </div>
+
+        <div class="filter-row">
+          <label class="filter-checkbox-label">
+            <input type="checkbox" id="mustHaveWebsiteCheckbox">
+            <span>Must have website</span>
+          </label>
+        </div>
+
+        <div class="filter-row">
+          <label class="filter-checkbox-label">
+            <input type="checkbox" id="mustHavePhoneCheckbox">
+            <span>Must have phone</span>
+          </label>
+        </div>
+
+        <div class="filter-row filter-row-full">
+          <label class="filter-label" for="categoryIncludeInput">Category must contain</label>
+          <input type="text" id="categoryIncludeInput" class="filter-input-text" placeholder="e.g. restaurant, cafe">
+        </div>
+
+        <div class="filter-row filter-row-full">
+          <label class="filter-label" for="categoryExcludeInput">Category must NOT contain</label>
+          <input type="text" id="categoryExcludeInput" class="filter-input-text" placeholder="e.g. chain, franchise">
+        </div>
+
+        <div class="filter-divider"><span class="filter-divider-text">Export filters</span></div>
+
+        <div class="filter-row">
+          <label class="filter-checkbox-label">
+            <input type="checkbox" id="mustHaveEmailCheckbox">
+            <span>Must have email</span>
+          </label>
+        </div>
+
+        <div class="filter-row">
+          <label class="filter-checkbox-label">
+            <input type="checkbox" id="mustHaveContactFormCheckbox">
+            <span>Must have contact form</span>
+          </label>
+        </div>
       </div>
 
       <div class="button-section">
@@ -126,6 +195,10 @@
             <label class="field-checkbox">
               <input type="checkbox" data-field="email" checked>
               <span>Email</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="emailSource" checked>
+              <span>Email Source</span>
             </label>
             <label class="field-checkbox">
               <input type="checkbox" data-field="rating" checked>
@@ -156,6 +229,10 @@
               <span>Contact Page</span>
             </label>
             <label class="field-checkbox">
+              <input type="checkbox" data-field="hasContactForm" checked>
+              <span>Has Contact Form</span>
+            </label>
+            <label class="field-checkbox">
               <input type="checkbox" data-field="facebookUrl" checked>
               <span>Facebook</span>
             </label>
@@ -170,6 +247,10 @@
             <label class="field-checkbox">
               <input type="checkbox" data-field="twitterUrl" checked>
               <span>Twitter/X</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" data-field="socialSearchUrl" checked>
+              <span>Social Search URL</span>
             </label>
             <label class="field-checkbox">
               <input type="checkbox" data-field="googleMapsUrl" checked>

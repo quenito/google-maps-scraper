@@ -36,6 +36,21 @@ const sheetsStatusText = document.getElementById('sheetsStatusText');
 const cancelEmailBtn = document.getElementById('cancelEmailBtn');
 const clearResultsBtn = document.getElementById('clearResultsBtn');
 
+// Filter DOM Elements
+const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
+const filtersSection = document.getElementById('filtersSection');
+const activeFilterBadge = document.getElementById('activeFilterBadge');
+const minRatingSelect = document.getElementById('minRatingSelect');
+const minReviewInput = document.getElementById('minReviewInput');
+const mustHaveWebsiteCheckbox = document.getElementById('mustHaveWebsiteCheckbox');
+const mustHavePhoneCheckbox = document.getElementById('mustHavePhoneCheckbox');
+const categoryIncludeInput = document.getElementById('categoryIncludeInput');
+const categoryExcludeInput = document.getElementById('categoryExcludeInput');
+const filteredStatus = document.getElementById('filteredStatus');
+const filteredCountEl = document.getElementById('filteredCount');
+const mustHaveEmailCheckbox = document.getElementById('mustHaveEmailCheckbox');
+const mustHaveContactFormCheckbox = document.getElementById('mustHaveContactFormCheckbox');
+
 // Trial/License DOM Elements
 const trialBanner = document.getElementById('trialBanner');
 const trialCount = document.getElementById('trialCount');
@@ -64,9 +79,21 @@ let autoExtractEmails = true;
 let currentDuplicatesSkipped = 0;
 let notificationsEnabled = true;
 let socialSearchEnabled = false; // Off by default due to speed tradeoff
+let scrapeFilters = {
+  minRating: 0,
+  mustHaveWebsite: false,
+  mustHavePhone: false,
+  minReviewCount: 0,
+  categoryInclude: '',
+  categoryExclude: '',
+  mustHaveEmail: false,
+  mustHaveContactForm: false
+};
+let currentFilteredOut = 0;
 let exportFields = {
   name: true,      // Always required
   email: true,
+  emailSource: true,
   rating: true,
   reviewCount: true,
   category: true,
@@ -75,10 +102,12 @@ let exportFields = {
   website: true,
   // v2.1: New fields
   contactPageUrl: true,
+  hasContactForm: true,
   facebookUrl: true,
   instagramUrl: true,
   linkedinUrl: true,
   twitterUrl: true,
+  socialSearchUrl: true,
   googleMapsUrl: true
 };
 
@@ -293,25 +322,103 @@ toggleFieldsBtn.addEventListener('click', () => {
   toggleFieldsBtn.textContent = isHidden ? 'Hide Fields' : 'Customize Fields';
 });
 
+// Toggle filters section
+toggleFiltersBtn.addEventListener('click', () => {
+  const isHidden = filtersSection.style.display === 'none';
+  filtersSection.style.display = isHidden ? 'block' : 'none';
+  toggleFiltersBtn.textContent = isHidden ? 'Hide Filters' : 'Scrape Filters ▼';
+});
+
+// Filter helpers
+function updateActiveFilterBadge() {
+  let count = 0;
+  if (scrapeFilters.minRating > 0) count++;
+  if (scrapeFilters.mustHaveWebsite) count++;
+  if (scrapeFilters.mustHavePhone) count++;
+  if (scrapeFilters.minReviewCount > 0) count++;
+  if (scrapeFilters.categoryInclude.trim()) count++;
+  if (scrapeFilters.categoryExclude.trim()) count++;
+  if (scrapeFilters.mustHaveEmail) count++;
+  if (scrapeFilters.mustHaveContactForm) count++;
+
+  if (count > 0) {
+    activeFilterBadge.textContent = `${count} active`;
+    activeFilterBadge.style.display = 'inline';
+  } else {
+    activeFilterBadge.style.display = 'none';
+  }
+}
+
+async function saveFilters() {
+  await chrome.storage.local.set({ scrapeFilters });
+  updateActiveFilterBadge();
+}
+
+// Filter change handlers
+minRatingSelect.addEventListener('change', async () => {
+  scrapeFilters.minRating = parseFloat(minRatingSelect.value);
+  await saveFilters();
+});
+
+minReviewInput.addEventListener('change', async () => {
+  const val = parseInt(minReviewInput.value, 10);
+  scrapeFilters.minReviewCount = isNaN(val) || val < 0 ? 0 : val;
+  minReviewInput.value = scrapeFilters.minReviewCount;
+  await saveFilters();
+});
+
+mustHaveWebsiteCheckbox.addEventListener('change', async () => {
+  scrapeFilters.mustHaveWebsite = mustHaveWebsiteCheckbox.checked;
+  await saveFilters();
+});
+
+mustHavePhoneCheckbox.addEventListener('change', async () => {
+  scrapeFilters.mustHavePhone = mustHavePhoneCheckbox.checked;
+  await saveFilters();
+});
+
+categoryIncludeInput.addEventListener('change', async () => {
+  scrapeFilters.categoryInclude = categoryIncludeInput.value;
+  await saveFilters();
+});
+
+categoryExcludeInput.addEventListener('change', async () => {
+  scrapeFilters.categoryExclude = categoryExcludeInput.value;
+  await saveFilters();
+});
+
+mustHaveEmailCheckbox.addEventListener('change', async () => {
+  scrapeFilters.mustHaveEmail = mustHaveEmailCheckbox.checked;
+  await saveFilters();
+});
+
+mustHaveContactFormCheckbox.addEventListener('change', async () => {
+  scrapeFilters.mustHaveContactForm = mustHaveContactFormCheckbox.checked;
+  await saveFilters();
+});
+
 // Clear results button handler
 clearResultsBtn.addEventListener('click', async () => {
   // Clear all scraped data
   scrapedData = [];
   scrapedDataWithEmails = [];
   currentDuplicatesSkipped = 0;
+  currentFilteredOut = 0;
 
   // Update storage
   await chrome.storage.local.set({
     scrapedData: [],
     scrapedDataWithEmails: [],
     isScrapin: false,
-    isExtractingEmails: false
+    isExtractingEmails: false,
+    currentFilteredOut: 0
   });
 
   // Reset UI
   updateLeadCount(0);
   hideEmailSection();
   duplicateStatus.style.display = 'none';
+  filteredStatus.style.display = 'none';
   exportBtn.disabled = true;
   exportSheetsBtn.disabled = true;
   clearResultsBtn.style.display = 'none';
@@ -366,10 +473,13 @@ confirmSheetsBtn.addEventListener('click', async () => {
   confirmSheetsBtn.disabled = true;
 
   // Get data to export (with field filtering applied)
-  const dataToExport = scrapedDataWithEmails.length > 0 ? scrapedDataWithEmails : scrapedData;
+  let dataToExport = scrapedDataWithEmails.length > 0 ? scrapedDataWithEmails : scrapedData;
+
+  // Apply post-extraction filters
+  dataToExport = applyPostExtractionFilters(dataToExport);
 
   if (dataToExport.length === 0) {
-    sheetsStatusText.textContent = 'No data to export';
+    sheetsStatusText.textContent = 'No data to export (all results filtered out)';
     confirmSheetsBtn.disabled = false;
     return;
   }
@@ -475,7 +585,9 @@ async function loadStoredData() {
       'autoExtractEmails',
       'exportFields',
       'notificationsEnabled',
-      'socialSearchEnabled'
+      'socialSearchEnabled',
+      'scrapeFilters',
+      'currentFilteredOut'
     ]);
 
     // Load auto-extract preference (default: true)
@@ -496,6 +608,20 @@ async function loadStoredData() {
       socialSearchCheckbox.checked = socialSearchEnabled;
     }
 
+    // Load scrape filter preferences
+    if (result.scrapeFilters) {
+      scrapeFilters = { ...scrapeFilters, ...result.scrapeFilters };
+      minRatingSelect.value = String(scrapeFilters.minRating);
+      minReviewInput.value = scrapeFilters.minReviewCount;
+      mustHaveWebsiteCheckbox.checked = scrapeFilters.mustHaveWebsite;
+      mustHavePhoneCheckbox.checked = scrapeFilters.mustHavePhone;
+      categoryIncludeInput.value = scrapeFilters.categoryInclude;
+      categoryExcludeInput.value = scrapeFilters.categoryExclude;
+      mustHaveEmailCheckbox.checked = scrapeFilters.mustHaveEmail;
+      mustHaveContactFormCheckbox.checked = scrapeFilters.mustHaveContactForm;
+    }
+    updateActiveFilterBadge();
+
     // Load export field preferences
     if (result.exportFields) {
       exportFields = { ...exportFields, ...result.exportFields };
@@ -506,6 +632,13 @@ async function loadStoredData() {
           checkbox.checked = exportFields[fieldName];
         }
       });
+    }
+
+    // Restore filtered out count
+    if (result.currentFilteredOut && result.currentFilteredOut > 0) {
+      currentFilteredOut = result.currentFilteredOut;
+      filteredCountEl.textContent = currentFilteredOut;
+      filteredStatus.style.display = 'block';
     }
 
     if (result.scrapedData && result.scrapedData.length > 0) {
@@ -598,7 +731,7 @@ function updateUI() {
     extractEmailsBtn.disabled = true;
   } else if (isExtractingEmails) {
     statusIndicator.classList.add('scraping');
-    statusText.textContent = 'Extracting Emails...';
+    statusText.textContent = 'Extracting Contact Info...';
     startStopBtn.disabled = true;
     extractEmailsBtn.disabled = true;
     extractEmailsBtn.classList.add('extracting');
@@ -710,16 +843,18 @@ startStopBtn.addEventListener('click', async () => {
       scrapedData = [];
       scrapedDataWithEmails = [];
       currentDuplicatesSkipped = 0;
+      currentFilteredOut = 0;
       updateLeadCount(0);
       hideEmailSection();
       duplicateStatus.style.display = 'none';
+      filteredStatus.style.display = 'none';
       await chrome.storage.local.set({
         isScrapin: true,
         isExtractingEmails: false,
         scrapedData: [],
         scrapedDataWithEmails: []
       });
-      await chrome.tabs.sendMessage(tab.id, { action: 'startScraping' });
+      await chrome.tabs.sendMessage(tab.id, { action: 'startScraping', filters: scrapeFilters });
     }
 
     updateUI();
@@ -798,15 +933,34 @@ cancelEmailBtn.addEventListener('click', async () => {
 // Export CSV button click handler
 exportBtn.addEventListener('click', async () => {
   // Use data with emails if available, otherwise use regular scraped data
-  const dataToExport = scrapedDataWithEmails.length > 0 ? scrapedDataWithEmails : scrapedData;
+  let dataToExport = scrapedDataWithEmails.length > 0 ? scrapedDataWithEmails : scrapedData;
+
+  // Apply post-extraction filters
+  dataToExport = applyPostExtractionFilters(dataToExport);
 
   if (dataToExport.length === 0) {
-    showError('No data to export');
+    showError('No data to export (all results filtered out by export filters)');
     return;
   }
 
   downloadCSV(dataToExport, 'google-maps-leads.csv');
 });
+
+// Apply post-extraction export filters (must have email, must have contact form, must have website)
+function applyPostExtractionFilters(data) {
+  let filtered = data;
+  // Re-check "must have website" at export time — websites can be cleared during extraction if broken
+  if (scrapeFilters.mustHaveWebsite) {
+    filtered = filtered.filter(r => r.website);
+  }
+  if (scrapeFilters.mustHaveEmail) {
+    filtered = filtered.filter(r => r.emails && r.emails.length > 0);
+  }
+  if (scrapeFilters.mustHaveContactForm) {
+    filtered = filtered.filter(r => r.hasContactForm === true);
+  }
+  return filtered;
+}
 
 // CSV conversion and download functions
 function convertToCSV(data) {
@@ -817,8 +971,8 @@ function convertToCSV(data) {
 
   // All possible headers in order (v2.1: added contactPageUrl, facebookUrl, instagramUrl, linkedinUrl, twitterUrl)
   const allHeaders = hasEmails
-    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl']
-    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl'];
+    ? ['name', 'email', 'emailSource', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'hasContactForm', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'socialSearchUrl', 'googleMapsUrl']
+    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'hasContactForm', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'socialSearchUrl', 'googleMapsUrl'];
 
   // Filter headers based on exportFields selection (name is always included)
   const headers = allHeaders.filter(header => {
@@ -843,6 +997,9 @@ function convertToCSV(data) {
     return headers.map(header => {
       if (header === 'email') {
         return escapeField(email);
+      }
+      if (header === 'hasContactForm') {
+        return escapeField(row[header] ? 'Yes' : 'No');
       }
       return escapeField(row[header]);
     }).join(',');
@@ -889,6 +1046,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       duplicateCount.textContent = currentDuplicatesSkipped;
       duplicateStatus.style.display = 'block';
     }
+    // Show filtered out count
+    if (message.filteredOut && message.filteredOut > 0) {
+      currentFilteredOut = message.filteredOut;
+      filteredCountEl.textContent = currentFilteredOut;
+      filteredStatus.style.display = 'block';
+      chrome.storage.local.set({ currentFilteredOut });
+    }
   } else if (message.type === 'complete') {
     // Scraping complete
     isScrapin = false;
@@ -912,6 +1076,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       currentDuplicatesSkipped = message.duplicatesSkipped;
       duplicateCount.textContent = currentDuplicatesSkipped;
       duplicateStatus.style.display = 'block';
+    }
+    // Show final filtered out count
+    if (message.filteredOut && message.filteredOut > 0) {
+      currentFilteredOut = message.filteredOut;
+      filteredCountEl.textContent = currentFilteredOut;
+      filteredStatus.style.display = 'block';
+      chrome.storage.local.set({ currentFilteredOut });
     }
 
     // Update history count (new URLs were saved by content script)

@@ -4,6 +4,8 @@ let scrapedData = [];
 let seenUrls = new Set();
 let urlHistory = new Set();
 let totalDuplicatesSkipped = 0;
+let activeFilters = null;
+let totalFilteredOut = 0;
 const MAX_RESULTS = 500;
 const SCROLL_DELAY = 2000;
 const MAX_NO_NEW_RESULTS = 10;
@@ -283,8 +285,7 @@ function extractBusinessData(element) {
 
     // Extract website - look for website button/link
     const websiteButton = element.querySelector('a[data-value="Website"]') ||
-                          element.querySelector('a[aria-label*="website" i]') ||
-                          element.querySelector('a[href^="http"]:not([href*="google.com/maps"])');
+                          element.querySelector('a[aria-label*="website" i]');
     if (websiteButton) {
       data.website = websiteButton.href;
     }
@@ -322,11 +323,53 @@ function getVisibleListings() {
   return Array.from(parentElements);
 }
 
+// Check if a business passes all active filters
+function passesFilters(data) {
+  if (!activeFilters) return true;
+
+  // Minimum rating
+  if (activeFilters.minRating > 0) {
+    if (data.rating === null || data.rating < activeFilters.minRating) return false;
+  }
+
+  // Minimum review count
+  if (activeFilters.minReviewCount > 0) {
+    if (data.reviewCount === null || data.reviewCount < activeFilters.minReviewCount) return false;
+  }
+
+  // Must have website
+  if (activeFilters.mustHaveWebsite && !data.website) return false;
+
+  // Must have phone
+  if (activeFilters.mustHavePhone && !data.phone) return false;
+
+  // Category include keywords (OR logic: must match at least one)
+  if (activeFilters.categoryInclude && activeFilters.categoryInclude.trim()) {
+    const keywords = activeFilters.categoryInclude.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+    if (keywords.length > 0) {
+      const category = (data.category || '').toLowerCase();
+      if (!keywords.some(kw => category.includes(kw))) return false;
+    }
+  }
+
+  // Category exclude keywords (OR logic: fails if matches any)
+  if (activeFilters.categoryExclude && activeFilters.categoryExclude.trim()) {
+    const keywords = activeFilters.categoryExclude.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+    if (keywords.length > 0) {
+      const category = (data.category || '').toLowerCase();
+      if (keywords.some(kw => category.includes(kw))) return false;
+    }
+  }
+
+  return true;
+}
+
 // Scrape currently visible results
 function scrapeVisibleResults() {
   const listings = getVisibleListings();
   let newCount = 0;
   let duplicatesThisRound = 0;
+  let filteredThisRound = 0;
 
   console.log(`[Scraper] Found ${listings.length} listing elements on page`);
 
@@ -354,13 +397,22 @@ function scrapeVisibleResults() {
     }
 
     seenUrls.add(identifier);
+
+    // Apply pre-scrape filters
+    if (!passesFilters(data)) {
+      filteredThisRound++;
+      totalFilteredOut++;
+      console.log(`[Scraper] Filtered out: ${data.name} (rating: ${data.rating}, reviews: ${data.reviewCount}, category: ${data.category})`);
+      return;
+    }
+
     scrapedData.push(data);
     newCount++;
     console.log(`[Scraper] Added: ${data.name}`);
   });
 
-  console.log(`[Scraper] New items this round: ${newCount}, Duplicates skipped: ${duplicatesThisRound}, Total: ${scrapedData.length}`);
-  return newCount;
+  console.log(`[Scraper] New items this round: ${newCount}, Filtered: ${filteredThisRound}, Duplicates: ${duplicatesThisRound}, Total: ${scrapedData.length}`);
+  return { newCount, filteredThisRound };
 }
 
 // Check if we've reached the end of results (Google shows "You've reached the end of the list")
@@ -440,7 +492,7 @@ async function scrollResults() {
 }
 
 // Main scraping function
-async function startScraping() {
+async function startScraping(filters) {
   if (!isOnSearchResults()) {
     sendError('Please navigate to Google Maps search results first');
     return;
@@ -456,22 +508,26 @@ async function startScraping() {
   scrapedData = [];
   seenUrls.clear();
   totalDuplicatesSkipped = 0;
+  activeFilters = filters || null;
+  totalFilteredOut = 0;
+
+  if (activeFilters) {
+    console.log('[Scraper] Active filters:', JSON.stringify(activeFilters));
+  }
 
   let noNewResultsCount = 0;
   let consecutiveNoScrollCount = 0;
 
   while (isScrapin && scrapedData.length < MAX_RESULTS) {
-    const previousCount = scrapedData.length;
-
     // Scrape visible results
-    scrapeVisibleResults();
+    const result = scrapeVisibleResults();
+    const newItems = result.newCount;
+    const hadActivity = result.newCount > 0 || result.filteredThisRound > 0;
 
     // Send progress update
     sendProgress(scrapedData.length);
 
-    const newItems = scrapedData.length - previousCount;
-
-    if (newItems === 0) {
+    if (!hadActivity) {
       noNewResultsCount++;
       console.log(`[Scraper] No new items found (attempt ${noNewResultsCount}/${MAX_NO_NEW_RESULTS})`);
 
@@ -530,6 +586,7 @@ function sendProgress(count) {
     type: 'progress',
     count: count,
     duplicatesSkipped: totalDuplicatesSkipped,
+    filteredOut: totalFilteredOut,
     data: scrapedData
   }).catch(() => {
     // Popup might be closed, ignore error
@@ -564,7 +621,8 @@ async function sendComplete() {
   chrome.runtime.sendMessage({
     type: 'complete',
     data: scrapedData,
-    duplicatesSkipped: totalDuplicatesSkipped
+    duplicatesSkipped: totalDuplicatesSkipped,
+    filteredOut: totalFilteredOut
   }).catch(() => {
     // Popup might be closed, ignore error
   });
@@ -583,7 +641,7 @@ function sendError(message) {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'startScraping') {
-    startScraping();
+    startScraping(message.filters);
     sendResponse({ status: 'started' });
   } else if (message.action === 'stopScraping') {
     stopScraping();

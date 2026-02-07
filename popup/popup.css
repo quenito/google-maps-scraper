@@ -849,3 +849,143 @@ footer {
   padding: 2px 5px;
   border-radius: 3px;
 }
+
+/* Pre-Scrape Filters */
+.filters-toggle-section {
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.active-filter-badge {
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.filters-section {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 15px;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.filter-row:last-child {
+  margin-bottom: 0;
+}
+
+.filter-row-full {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: #202124;
+  flex-shrink: 0;
+}
+
+.filter-select {
+  padding: 4px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #202124;
+  background: white;
+  outline: none;
+  cursor: pointer;
+  min-width: 70px;
+}
+
+.filter-select:focus {
+  border-color: #1a73e8;
+}
+
+.filter-input-number {
+  width: 70px;
+  padding: 4px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #202124;
+  outline: none;
+  text-align: right;
+}
+
+.filter-input-number:focus {
+  border-color: #1a73e8;
+}
+
+.filter-input-text {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #202124;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.filter-input-text:focus {
+  border-color: #1a73e8;
+}
+
+.filter-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #202124;
+  cursor: pointer;
+}
+
+.filter-checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #1a73e8;
+  cursor: pointer;
+}
+
+.filter-divider {
+  border-top: 1px solid #dadce0;
+  margin: 12px 0 10px;
+  position: relative;
+  text-align: center;
+}
+
+.filter-divider-text {
+  background: #f8f9fa;
+  padding: 0 8px;
+  position: relative;
+  top: -8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #9aa0a6;
+  letter-spacing: 0.5px;
+}
+
+.filtered-status {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.filtered-count {
+  font-weight: 600;
+  color: #fbbc04;
+}

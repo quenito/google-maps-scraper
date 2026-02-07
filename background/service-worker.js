@@ -489,6 +489,62 @@ function findContactPageUrls(html, baseUrl) {
   return Array.from(contactUrls).slice(0, 3); // Limit to 3 contact pages max
 }
 
+// Detect if a page has an embedded contact form
+// Used to set contactPageUrl when there's no dedicated /contact page
+function hasEmbeddedContactForm(html) {
+  const lowerHtml = html.toLowerCase();
+
+  // Must have a <form> element
+  if (!lowerHtml.includes('<form')) return false;
+
+  // Check for email input fields (strong indicator of contact form)
+  const hasEmailInput = /type=["']email["']|name=["'][^"']*email[^"']*["']/i.test(html);
+
+  // Check for contact-related headings/text near forms
+  const hasContactText = /contact\s*us|get\s*in\s*touch|send\s*us\s*a\s*message|schedule\s*(your|an)\s*appointment|reach\s*out|drop\s*us\s*a\s*(line|message)|enquir|request\s*a\s*quote/i.test(html);
+
+  // Check for message/textarea (typical of contact forms)
+  const hasTextarea = lowerHtml.includes('<textarea');
+
+  // A form with an email input + textarea or contact text is a contact form
+  return hasEmailInput && (hasContactText || hasTextarea);
+}
+
+// Check if a detected contact form belongs to the actual business (not a template/builder default)
+// Compares page content against the business's Google Maps address
+function isContactFormGenuine(html, businessAddress) {
+  if (!businessAddress) return true; // Can't validate without address
+
+  // Extract city from business address (format: "123 Street, City, ST 12345")
+  const addressParts = businessAddress.split(',').map(p => p.trim());
+  if (addressParts.length < 2) return true;
+
+  // City is typically the second part (after street address)
+  const city = addressParts[1].trim().toLowerCase();
+  if (!city || city.length < 3) return true;
+
+  const lowerHtml = html.toLowerCase();
+
+  // If the page mentions the business's city, it's genuine
+  if (lowerHtml.includes(city)) return true;
+
+  // Check for foreign address patterns (UK postal codes like SW1A 1AA, EC2R 8AH)
+  const ukPostcodePattern = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+  if (ukPostcodePattern.test(html)) {
+    console.log(`[Contact Form] Detected UK postcode on contact page - likely template`);
+    return false;
+  }
+
+  // If page has a street address that doesn't include the business city, likely a template
+  const hasAddressText = /\d+\s+(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|blvd|boulevard|way|court|ct|place|pl)\b/i.test(html);
+  if (hasAddressText) {
+    console.log(`[Contact Form] Contact page has address but doesn't mention business city "${city}" - likely template`);
+    return false;
+  }
+
+  return true; // No conflicting address found, trust the form detection
+}
+
 // Extract social media profile URLs from HTML (Feature C: v2.1)
 function extractSocialMediaUrls(html) {
   const socialUrls = {
@@ -541,13 +597,81 @@ function extractSocialMediaUrls(html) {
   return socialUrls;
 }
 
+// Validate that a social profile URL is live (not deleted/unavailable)
+// Returns the URL if valid, null if the profile appears deleted
+async function validateSocialUrl(url) {
+  if (!url) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+
+    clearTimeout(timeoutId);
+
+    // 404 or 410 = definitely deleted
+    if (response.status === 404 || response.status === 410) {
+      console.log(`[Social Validate] Dead profile (${response.status}): ${url}`);
+      return null;
+    }
+
+    // For Instagram and Facebook, check page content for "not available" indicators
+    if (url.includes('instagram.com') || url.includes('facebook.com')) {
+      const html = await response.text();
+      const deadIndicators = [
+        "this page isn't available",
+        'this page is not available',
+        "sorry, this page isn't available",
+        "this content isn't available",
+        'this content is not available',
+        'page not found',
+        'the link you followed may be broken',
+        'this account has been disabled'
+      ];
+      const lowerHtml = html.toLowerCase();
+      for (const indicator of deadIndicators) {
+        if (lowerHtml.includes(indicator)) {
+          console.log(`[Social Validate] Dead profile (content match: "${indicator}"): ${url}`);
+          return null;
+        }
+      }
+    }
+
+    return url;
+  } catch (e) {
+    // Network error / timeout — don't discard, could just be rate limited
+    console.warn(`[Social Validate] Could not validate ${url}: ${e.message}`);
+    return url;
+  }
+}
+
+// Validate all social URLs in parallel, returns cleaned object
+async function validateSocialUrls(socialUrls) {
+  const [facebookUrl, instagramUrl, linkedinUrl, twitterUrl] = await Promise.all([
+    validateSocialUrl(socialUrls.facebookUrl),
+    validateSocialUrl(socialUrls.instagramUrl),
+    validateSocialUrl(socialUrls.linkedinUrl),
+    validateSocialUrl(socialUrls.twitterUrl)
+  ]);
+  return { facebookUrl, instagramUrl, linkedinUrl, twitterUrl };
+}
+
 // Search Google to find social media profiles for a business (v2.1)
 // Used for businesses without websites
 async function searchGoogleForSocialProfiles(businessName, location) {
   const results = {
     facebookUrl: null,
     instagramUrl: null,
-    emails: []
+    emails: [],
+    socialSearchUrl: null
   };
 
   try {
@@ -558,6 +682,7 @@ async function searchGoogleForSocialProfiles(businessName, location) {
     // Search for Facebook page
     const fbSearchQuery = encodeURIComponent(`"${cleanName}" ${cleanLocation} site:facebook.com`);
     const fbSearchUrl = `https://www.google.com/search?q=${fbSearchQuery}&num=5`;
+    results.socialSearchUrl = fbSearchUrl;
 
     console.log(`[Social Search] Searching Google for Facebook: ${cleanName} ${cleanLocation}`);
 
@@ -610,18 +735,13 @@ async function searchGoogleForSocialProfiles(businessName, location) {
       }
     }
 
-    // If we found a Facebook page, try to extract email from it
+    // If we found a Facebook page, try to extract email from it via tab
     if (results.facebookUrl) {
-      console.log(`[Social Search] Fetching Facebook page for email: ${results.facebookUrl}`);
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const fbPageResult = await fetchPage(results.facebookUrl);
-      if (fbPageResult.success) {
-        const fbEmails = extractEmailsFromHTML(fbPageResult.html);
-        if (fbEmails.length > 0) {
-          results.emails = fbEmails;
-          console.log(`[Social Search] Found ${fbEmails.length} emails on Facebook page!`);
-        }
+      console.log(`[Social Search] Extracting email from Facebook via tab: ${results.facebookUrl}`);
+      const fbEmails = await extractEmailFromFacebookViaTab(results.facebookUrl);
+      if (fbEmails.length > 0) {
+        results.emails = fbEmails;
+        console.log(`[Social Search] Found ${fbEmails.length} emails on Facebook page!`);
       }
     }
 
@@ -630,6 +750,157 @@ async function searchGoogleForSocialProfiles(businessName, location) {
   }
 
   return results;
+}
+
+// Extract email from a Facebook page by rendering it in a background tab
+// Facebook renders content via JavaScript, so fetch() doesn't get emails
+// This opens the page in a real browser tab to access the rendered DOM
+async function extractEmailFromFacebookViaTab(facebookUrl) {
+  let tabId = null;
+  try {
+    console.log(`[Facebook Tab] Opening: ${facebookUrl}`);
+
+    // Open Facebook URL in a background tab
+    const tab = await chrome.tabs.create({ url: facebookUrl, active: false });
+    tabId = tab.id;
+
+    // Wait for page to fully load
+    await waitForTabLoad(tabId, 10000);
+
+    // Extra wait for Facebook's dynamic content to render
+    await new Promise(resolve => setTimeout(resolve, 2500));
+
+    // Step 1: Try to dismiss login popup and scroll to reveal content
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        // Dismiss the login wall/popup if present
+        const closeButtons = document.querySelectorAll('[aria-label="Close"], [data-testid="royal_close_button"]');
+        closeButtons.forEach(btn => { try { btn.click(); } catch(e) {} });
+
+        // Scroll down to load more content (About section etc.)
+        window.scrollBy(0, 500);
+      }
+    });
+
+    // Wait for content to settle after dismissing popup
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Step 2: Extract emails from the rendered DOM
+    let emails = await extractEmailsFromTab(tabId);
+
+    // Step 3: If no email found on main page, try the /about page
+    if (emails.length === 0) {
+      // Build the about URL from the Facebook page URL
+      const cleanUrl = facebookUrl.replace(/\/+$/, ''); // Remove trailing slashes
+      const aboutUrl = cleanUrl + '/about';
+      console.log(`[Facebook Tab] No email on main page, trying: ${aboutUrl}`);
+
+      await chrome.tabs.update(tabId, { url: aboutUrl });
+      await waitForTabLoad(tabId, 10000);
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      // Dismiss login popup again on about page
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const closeButtons = document.querySelectorAll('[aria-label="Close"], [data-testid="royal_close_button"]');
+          closeButtons.forEach(btn => { try { btn.click(); } catch(e) {} });
+          window.scrollBy(0, 500);
+        }
+      });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      emails = await extractEmailsFromTab(tabId);
+      if (emails.length > 0) {
+        console.log(`[Facebook Tab] Found ${emails.length} emails on /about page!`);
+      }
+    }
+
+    // Close the tab
+    await chrome.tabs.remove(tabId);
+    tabId = null;
+
+    console.log(`[Facebook Tab] Result: ${emails.length} emails: ${emails.join(', ')}`);
+    return emails;
+  } catch (error) {
+    console.warn(`[Facebook Tab] Error:`, error.message);
+    // Clean up tab on error
+    if (tabId) {
+      try { await chrome.tabs.remove(tabId); } catch (e) {}
+    }
+    return [];
+  }
+}
+
+// Helper: extract emails from a tab's rendered DOM
+async function extractEmailsFromTab(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      // Get all visible text on the page
+      const bodyText = document.body.innerText || '';
+
+      // Also check meta tags
+      const metaTags = document.querySelectorAll('meta[content*="@"]');
+      let metaText = '';
+      metaTags.forEach(tag => { metaText += ' ' + tag.getAttribute('content'); });
+
+      // Check structured data
+      const ldJson = document.querySelectorAll('script[type="application/ld+json"]');
+      let ldText = '';
+      ldJson.forEach(el => { ldText += ' ' + el.textContent; });
+
+      // Also check all href attributes for mailto links
+      const mailtoLinks = document.querySelectorAll('a[href^="mailto:"]');
+      let mailtoText = '';
+      mailtoLinks.forEach(link => { mailtoText += ' ' + link.href.replace('mailto:', ''); });
+
+      const allText = bodyText + ' ' + metaText + ' ' + ldText + ' ' + mailtoText;
+
+      const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+      const matches = allText.match(emailPattern) || [];
+
+      // Deduplicate and filter out obvious non-business emails
+      return [...new Set(matches.map(e => e.toLowerCase()))].filter(email =>
+        !email.includes('facebook.com') &&
+        !email.includes('fbcdn.') &&
+        !email.includes('example.com') &&
+        !email.includes('sentry.io') &&
+        !email.includes('w3.org') &&
+        !email.includes('schema.org') &&
+        !email.includes('wixpress.com') &&
+        !email.includes('googleapis.com') &&
+        !email.endsWith('.png') &&
+        !email.endsWith('.jpg') &&
+        !email.endsWith('.svg') &&
+        !email.startsWith('test@') &&
+        !email.startsWith('example@')
+      );
+    }
+  });
+
+  return results[0]?.result || [];
+}
+
+// Wait for a tab to finish loading
+function waitForTabLoad(tabId, timeoutMs = 10000) {
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }, timeoutMs);
+
+    function listener(id, info) {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timeout);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+
+    chrome.tabs.onUpdated.addListener(listener);
+  });
 }
 
 // Fetch a single page
@@ -661,14 +932,16 @@ async function fetchPage(url) {
 
 // Fetch a website and extract emails (including contact pages)
 // v2.1: Enhanced with contact page URL capture, social media extraction, and Facebook fallback
-async function fetchAndExtractEmails(url) {
+async function fetchAndExtractEmails(url, businessAddress) {
   if (!url || url === 'null' || url === 'undefined') {
     return {
       success: false,
       emails: [],
+      emailSource: null,
       error: 'No URL provided',
       pagesScanned: 0,
       contactPageUrl: null,
+      hasContactForm: false,
       socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null },
       websiteBroken: false // Not broken, just not provided
     };
@@ -685,8 +958,10 @@ async function fetchAndExtractEmails(url) {
     const allEmails = new Set();
     let pagesScanned = 0;
     let contactPageUrl = null;
+    let emailSource = null; // Track where the first email was found
     let allSocialUrls = { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null };
     let allHtmlContent = ''; // Accumulate HTML for social media extraction
+    let hasContactForm = false; // Track if any page has a contact form
 
     // Fetch homepage
     const homeResult = await fetchPage(url);
@@ -696,9 +971,11 @@ async function fetchAndExtractEmails(url) {
       return {
         success: false,
         emails: [],
+        emailSource: null,
         error: homeResult.error,
         pagesScanned: 0,
         contactPageUrl: null,
+        hasContactForm: false,
         socialUrls: allSocialUrls,
         websiteBroken: true // Mark as broken so caller can clear the URL and fall back to social search
       };
@@ -710,8 +987,16 @@ async function fetchAndExtractEmails(url) {
     // Extract emails from homepage
     const homeEmails = extractEmailsFromHTML(homeResult.html);
     homeEmails.forEach(email => allEmails.add(email));
+    if (homeEmails.length > 0 && !emailSource) emailSource = '🌐 Website';
 
     console.log(`[Email Extractor] Found ${homeEmails.length} emails on homepage`);
+
+    // Check if homepage has an embedded contact form (for contactPageUrl fallback)
+    const homepageHasContactForm = hasEmbeddedContactForm(homeResult.html) && isContactFormGenuine(homeResult.html, businessAddress);
+    if (homepageHasContactForm) {
+      hasContactForm = true;
+      console.log(`[Email Extractor] Homepage has embedded contact form`);
+    }
 
     // Extract social media URLs from homepage (Feature C: v2.1)
     const homeSocialUrls = extractSocialMediaUrls(homeResult.html);
@@ -756,7 +1041,14 @@ async function fetchAndExtractEmails(url) {
 
         const contactEmails = extractEmailsFromHTML(contactResult.html);
         contactEmails.forEach(email => allEmails.add(email));
+        if (contactEmails.length > 0 && !emailSource) emailSource = '📋 Contact Page';
         console.log(`[Email Extractor] Found ${contactEmails.length} emails on ${contactUrl}`);
+
+        // Check if this contact page has an actual contact form (and it's genuine, not a template)
+        if (!hasContactForm && hasEmbeddedContactForm(contactResult.html) && isContactFormGenuine(contactResult.html, businessAddress)) {
+          hasContactForm = true;
+          console.log(`[Email Extractor] Contact form found on: ${contactUrl}`);
+        }
 
         // Extract social media URLs from contact page (Feature C: v2.1)
         const pageSocialUrls = extractSocialMediaUrls(contactResult.html);
@@ -768,40 +1060,39 @@ async function fetchAndExtractEmails(url) {
       }
     }
 
+    // If no dedicated contact page was found but homepage has a contact form, use homepage URL
+    if (!contactPageUrl && homepageHasContactForm) {
+      contactPageUrl = url;
+      console.log(`[Email Extractor] No dedicated contact page found, using homepage with embedded form: ${url}`);
+    }
+
     // Feature D: Facebook Email Extraction (v2.1)
     // If no email found on website and we have a Facebook URL, try to extract email from Facebook
+    // Uses tab-based extraction since Facebook renders content via JavaScript
     if (allEmails.size === 0 && allSocialUrls.facebookUrl) {
-      console.log(`[Email Extractor] No email found on website, trying Facebook: ${allSocialUrls.facebookUrl}`);
+      console.log(`[Email Extractor] No email found on website, trying Facebook via tab: ${allSocialUrls.facebookUrl}`);
 
-      await new Promise(resolve => setTimeout(resolve, 500)); // Rate limiting
-
-      const facebookResult = await fetchPage(allSocialUrls.facebookUrl);
-
-      if (facebookResult.success) {
+      const facebookEmails = await extractEmailFromFacebookViaTab(allSocialUrls.facebookUrl);
+      facebookEmails.forEach(email => allEmails.add(email));
+      if (facebookEmails.length > 0) {
         pagesScanned++;
-        const facebookEmails = extractEmailsFromHTML(facebookResult.html);
-        facebookEmails.forEach(email => allEmails.add(email));
-
-        if (facebookEmails.length > 0) {
-          console.log(`[Email Extractor] Found ${facebookEmails.length} emails on Facebook page!`);
-        } else {
-          console.log(`[Email Extractor] No email found on Facebook page`);
-        }
-      } else {
-        console.log(`[Email Extractor] Could not fetch Facebook page: ${facebookResult.error}`);
+        if (!emailSource) emailSource = '📘 Facebook';
+        console.log(`[Email Extractor] Found ${facebookEmails.length} emails on Facebook page!`);
       }
     }
 
     const emails = Array.from(allEmails);
-    console.log(`[Email Extractor] Total: ${emails.length} unique emails from ${pagesScanned} pages for ${url}`);
+    console.log(`[Email Extractor] Total: ${emails.length} unique emails from ${pagesScanned} pages for ${url} (source: ${emailSource})`);
     console.log(`[Email Extractor] Social URLs found:`, allSocialUrls);
 
     return {
       success: true,
       emails,
+      emailSource,
       error: null,
       pagesScanned,
       contactPageUrl,
+      hasContactForm,
       socialUrls: allSocialUrls,
       websiteBroken: false
     };
@@ -810,9 +1101,11 @@ async function fetchAndExtractEmails(url) {
     return {
       success: false,
       emails: [],
+      emailSource: null,
       error: error.message,
       pagesScanned: 0,
       contactPageUrl: null,
+      hasContactForm: false,
       socialUrls: { facebookUrl: null, instagramUrl: null, linkedinUrl: null, twitterUrl: null },
       websiteBroken: true // Treat exceptions as broken website
     };
@@ -852,7 +1145,7 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
     }
 
     if (business.website) {
-      const result = await fetchAndExtractEmails(business.website);
+      const result = await fetchAndExtractEmails(business.website, business.address);
 
       // Check if website was broken/unreachable
       if (result.websiteBroken) {
@@ -863,30 +1156,44 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
           console.log(`[Email Extractor] Falling back to social search for "${business.name}"`);
           const socialResults = await searchGoogleForSocialProfiles(business.name, business.address);
 
-          results.push({
-            ...business,
-            website: null, // Clear broken website
-            emails: socialResults.emails,
-            emailError: socialResults.emails.length > 0 ? null : 'Website broken, searched social',
-            pagesScanned: 0,
-            contactPageUrl: null,
+          // Validate social URLs are live (not deleted profiles)
+          const validatedSocial = await validateSocialUrls({
             facebookUrl: socialResults.facebookUrl,
             instagramUrl: socialResults.instagramUrl,
             linkedinUrl: null,
             twitterUrl: null
+          });
+
+          results.push({
+            ...business,
+            website: null, // Clear broken website
+            emails: socialResults.emails,
+            emailSource: socialResults.emails.length > 0 ? '🔍 Social Search' : null,
+            emailError: socialResults.emails.length > 0 ? null : 'Website broken, searched social',
+            pagesScanned: 0,
+            contactPageUrl: null,
+            hasContactForm: false,
+            facebookUrl: validatedSocial.facebookUrl,
+            instagramUrl: validatedSocial.instagramUrl,
+            linkedinUrl: null,
+            twitterUrl: null,
+            socialSearchUrl: socialResults.socialSearchUrl
           });
         } else {
           results.push({
             ...business,
             website: null, // Clear broken website
             emails: [],
+            emailSource: null,
             emailError: 'Website broken/unreachable',
             pagesScanned: 0,
             contactPageUrl: null,
+            hasContactForm: false,
             facebookUrl: null,
             instagramUrl: null,
             linkedinUrl: null,
-            twitterUrl: null
+            twitterUrl: null,
+            socialSearchUrl: null
           });
         }
       } else {
@@ -895,7 +1202,9 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
                                result.socialUrls?.linkedinUrl || result.socialUrls?.twitterUrl;
 
         let finalEmails = [...result.emails];
+        let finalEmailSource = result.emailSource || null;
         let finalSocialUrls = { ...result.socialUrls };
+        let finalSocialSearchUrl = null;
 
         // If no social links found on website, try Google search (when enabled)
         if (!hasSocialLinks && socialSearchEnabled) {
@@ -905,39 +1214,44 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
           // Merge social URLs found via Google
           if (socialResults.facebookUrl) finalSocialUrls.facebookUrl = socialResults.facebookUrl;
           if (socialResults.instagramUrl) finalSocialUrls.instagramUrl = socialResults.instagramUrl;
+          finalSocialSearchUrl = socialResults.socialSearchUrl;
 
           // Add any emails found from social profiles
           socialResults.emails.forEach(email => {
             if (!finalEmails.includes(email)) {
               finalEmails.push(email);
+              if (!finalEmailSource) finalEmailSource = '🔍 Social Search';
             }
           });
         }
 
-        // If we have a Facebook URL but no email yet, try to extract from Facebook
+        // Validate social URLs are live (not deleted profiles)
+        finalSocialUrls = await validateSocialUrls(finalSocialUrls);
+
+        // If we have a Facebook URL but no email yet, try to extract from Facebook via tab
         if (finalEmails.length === 0 && finalSocialUrls.facebookUrl) {
-          console.log(`[Email Extractor] Have Facebook URL but no email - fetching: ${finalSocialUrls.facebookUrl}`);
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const fbResult = await fetchPage(finalSocialUrls.facebookUrl);
-          if (fbResult.success) {
-            const fbEmails = extractEmailsFromHTML(fbResult.html);
-            if (fbEmails.length > 0) {
-              console.log(`[Email Extractor] Found ${fbEmails.length} emails on Facebook!`);
-              finalEmails.push(...fbEmails);
-            }
+          console.log(`[Email Extractor] Have Facebook URL but no email - opening tab: ${finalSocialUrls.facebookUrl}`);
+          const fbEmails = await extractEmailFromFacebookViaTab(finalSocialUrls.facebookUrl);
+          if (fbEmails.length > 0) {
+            console.log(`[Email Extractor] Found ${fbEmails.length} emails on Facebook!`);
+            finalEmails.push(...fbEmails);
+            if (!finalEmailSource) finalEmailSource = '📘 Facebook';
           }
         }
 
         results.push({
           ...business,
           emails: finalEmails,
+          emailSource: finalEmailSource,
           emailError: result.error,
           pagesScanned: result.pagesScanned,
           contactPageUrl: result.contactPageUrl || null,
+          hasContactForm: result.hasContactForm || false,
           facebookUrl: finalSocialUrls.facebookUrl || null,
           instagramUrl: finalSocialUrls.instagramUrl || null,
           linkedinUrl: finalSocialUrls.linkedinUrl || null,
-          twitterUrl: finalSocialUrls.twitterUrl || null
+          twitterUrl: finalSocialUrls.twitterUrl || null,
+          socialSearchUrl: finalSocialSearchUrl
         });
       }
     } else {
@@ -947,28 +1261,42 @@ async function extractEmailsFromBusinesses(businesses, sendProgress, socialSearc
 
         const socialResults = await searchGoogleForSocialProfiles(business.name, business.address);
 
-        results.push({
-          ...business,
-          emails: socialResults.emails,
-          emailError: socialResults.emails.length > 0 ? null : 'No website (searched social)',
-          pagesScanned: 0,
-          contactPageUrl: null,
+        // Validate social URLs are live (not deleted profiles)
+        const validatedSocial = await validateSocialUrls({
           facebookUrl: socialResults.facebookUrl,
           instagramUrl: socialResults.instagramUrl,
           linkedinUrl: null,
           twitterUrl: null
         });
+
+        results.push({
+          ...business,
+          emails: socialResults.emails,
+          emailSource: socialResults.emails.length > 0 ? '🔍 Social Search' : null,
+          emailError: socialResults.emails.length > 0 ? null : 'No website (searched social)',
+          pagesScanned: 0,
+          contactPageUrl: null,
+          hasContactForm: false,
+          facebookUrl: validatedSocial.facebookUrl,
+          instagramUrl: validatedSocial.instagramUrl,
+          linkedinUrl: null,
+          twitterUrl: null,
+          socialSearchUrl: socialResults.socialSearchUrl
+        });
       } else {
         results.push({
           ...business,
           emails: [],
+          emailSource: null,
           emailError: 'No website',
           pagesScanned: 0,
           contactPageUrl: null,
+          hasContactForm: false,
           facebookUrl: null,
           instagramUrl: null,
           linkedinUrl: null,
-          twitterUrl: null
+          twitterUrl: null,
+          socialSearchUrl: null
         });
       }
     }
@@ -1015,8 +1343,8 @@ function dataToRows(data, exportFields) {
   // Build headers based on selected fields
   // v2.1: Added contactPageUrl, facebookUrl, instagramUrl, linkedinUrl, twitterUrl
   const allFields = hasEmails
-    ? ['name', 'email', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl']
-    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'googleMapsUrl'];
+    ? ['name', 'email', 'emailSource', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'hasContactForm', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'socialSearchUrl', 'googleMapsUrl']
+    : ['name', 'rating', 'reviewCount', 'category', 'address', 'phone', 'website', 'contactPageUrl', 'hasContactForm', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'socialSearchUrl', 'googleMapsUrl'];
 
   const headers = allFields.filter(field => {
     if (field === 'name') return true;
@@ -1024,7 +1352,7 @@ function dataToRows(data, exportFields) {
   });
 
   // Fields that should be rendered as clickable hyperlinks
-  const hyperlinkFields = ['googleMapsUrl', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl'];
+  const hyperlinkFields = ['googleMapsUrl', 'contactPageUrl', 'facebookUrl', 'instagramUrl', 'linkedinUrl', 'twitterUrl', 'socialSearchUrl'];
 
   // Build data rows
   const rows = data.map(row => {
@@ -1050,10 +1378,17 @@ function dataToRows(data, exportFields) {
             linkText = 'LinkedIn';
           } else if (header === 'twitterUrl') {
             linkText = 'Twitter/X';
+          } else if (header === 'socialSearchUrl') {
+            linkText = 'Social Search';
           }
           return `=HYPERLINK("${escapeForHyperlink(url)}", "${escapeForHyperlink(linkText)}")`;
         }
         return '';
+      }
+
+      // Render hasContactForm as Yes/No
+      if (header === 'hasContactForm') {
+        return row[header] ? 'Yes' : 'No';
       }
 
       // Prefix phone with single quote to prevent formula interpretation
